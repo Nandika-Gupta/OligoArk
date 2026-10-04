@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 from .policy import ChannelProfile, CodecPolicy
 
@@ -46,10 +46,15 @@ class EmpiricalPolicyModel:
             + abs(left.dropout_rate - right.dropout_rate)
         )
 
-    def recommend(self, channel: ChannelProfile) -> LearnedPolicyRecommendation:
+    def recommend(
+        self,
+        channel: ChannelProfile,
+        candidates: list[CodecPolicy] | None = None,
+    ) -> LearnedPolicyRecommendation:
         if not self._observations:
             raise ValueError("Model must be fit before recommendation")
 
+        allowed = {_policy_key(policy) for policy in candidates} if candidates else None
         max_nucleotides = max(obs.encoded_nucleotides for obs in self._observations)
         max_runtime = max(obs.runtime_seconds for obs in self._observations) or 1.0
         scores: dict[tuple[int, int, int, bool], float] = {}
@@ -58,6 +63,8 @@ class EmpiricalPolicyModel:
 
         for obs in self._observations:
             key = _policy_key(obs.policy)
+            if allowed is not None and key not in allowed:
+                continue
             distance = self._distance(channel, obs.channel)
             weight = 1.0 / (0.001 + distance)
             recovery_score = 1.0 if obs.recovered else -1.0
@@ -68,6 +75,8 @@ class EmpiricalPolicyModel:
             counts[key] = counts.get(key, 0) + 1
             policies[key] = obs.policy
 
+        if not scores:
+            raise ValueError("No fitted observations match the supplied candidate policies")
         winner = max(scores, key=lambda policy_key: scores[policy_key])
         total_magnitude = sum(abs(value) for value in scores.values()) or 1.0
         confidence = min(1.0, abs(scores[winner]) / total_magnitude)
@@ -204,6 +213,72 @@ class LinearUtilityPolicyModel:
             xtx[index][index] += self.ridge
         self._coefficients = _solve_linear_system(xtx, xty)
         return self
+
+    @property
+    def coefficients(self) -> tuple[float, ...]:
+        return tuple(self._coefficients)
+
+    def to_dict(self) -> dict[str, object]:
+        if not self._coefficients:
+            raise ValueError("Model must be fit before serialization")
+        return {
+            "model": "linear-utility-ridge",
+            "ridge": self.ridge,
+            "coefficients": list(self._coefficients),
+            "max_nucleotides": self._max_nucleotides,
+            "max_runtime": self._max_runtime,
+            "policies": [
+                asdict(policy)
+                for _, policy in sorted(self._policies.items(), key=lambda item: item[0])
+            ],
+        }
+
+    @classmethod
+    def from_dict(cls, value: dict[str, object]) -> LinearUtilityPolicyModel:
+        if value.get("model") != "linear-utility-ridge":
+            raise ValueError("Unsupported serialized policy model")
+        ridge = value.get("ridge")
+        coefficients = value.get("coefficients")
+        policies = value.get("policies")
+        max_nucleotides = value.get("max_nucleotides")
+        max_runtime = value.get("max_runtime")
+        if isinstance(ridge, bool) or not isinstance(ridge, (int, float)):
+            raise ValueError("Serialized ridge must be numeric")
+        if not isinstance(coefficients, list) or not coefficients:
+            raise ValueError("Serialized coefficients must be a non-empty list")
+        if not isinstance(policies, list) or not policies:
+            raise ValueError("Serialized policies must be a non-empty list")
+        if (
+            isinstance(max_nucleotides, bool)
+            or not isinstance(max_nucleotides, (int, float))
+            or isinstance(max_runtime, bool)
+            or not isinstance(max_runtime, (int, float))
+        ):
+            raise ValueError("Serialized normalization values must be numeric")
+
+        model = cls(float(ridge))
+        model._coefficients = []
+        for coefficient in coefficients:
+            if isinstance(coefficient, bool) or not isinstance(coefficient, (int, float)):
+                raise ValueError("Serialized coefficient values must be numeric")
+            model._coefficients.append(float(coefficient))
+        for raw in policies:
+            if not isinstance(raw, dict):
+                raise ValueError("Serialized policy entries must be objects")
+            rationale = raw.get("rationale", ())
+            if not isinstance(rationale, (list, tuple)):
+                raise ValueError("Serialized policy rationale must be a list or tuple")
+            policy = CodecPolicy(
+                chunk_size=int(raw["chunk_size"]),
+                rs_nsym=int(raw["rs_nsym"]),
+                parity_group_size=int(raw["parity_group_size"]),
+                adaptive_masks=bool(raw["adaptive_masks"]),
+                rationale=tuple(str(item) for item in rationale),
+            )
+            model._policies[_policy_key(policy)] = policy
+        model._max_nucleotides = float(max_nucleotides)
+        model._max_runtime = float(max_runtime)
+        return model
 
     def predict_utility(self, channel: ChannelProfile, policy: CodecPolicy) -> float:
         if not self._coefficients:

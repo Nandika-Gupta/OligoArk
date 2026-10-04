@@ -14,15 +14,16 @@ DNA data storage research has demonstrated high-density archival concepts, rando
 
 ## Research contributions
 
-OligoArk v0.4 exposes five testable research layers through one **AI-Native Archival Intelligence Layer**:
+OligoArk v0.5 exposes six testable research layers through one **AI-Native Archival Intelligence Layer**:
 
 1. **Explainable heterogeneous storage tiering** — evaluates SSD, object archive, tape, and an explicitly experimental `dna_future` tier from retention, access, mutability, durability, retrieval urgency, redundancy, energy, and user-supplied normalized economic assumptions.
 2. **Search-based adaptive codec optimisation** — actually encodes, simulates, reconstructs, SHA-256-verifies, measures and ranks candidate configurations across chunk size, Reed–Solomon strength, XOR/fountain/hybrid redundancy, sequence constraints and reconstruction mode.
 3. **Explicit graph + alignment reconstruction** — sequencing reads are graph nodes, qualifying similarities are weighted edges, connected components form clusters, and a medoid-anchored global-alignment consensus provides a deterministic indel-aware baseline.
 4. **Policy learning** — both an instance-based baseline and a deterministic ridge-regression utility model learn only from caller-supplied reproducible observations; no proprietary model is required.
-5. **Lifecycle-aware archival intelligence** — storage tiering can include caller-supplied cost, energy and retrieval-latency assumptions in addition to retention, access, mutability, durability and redundancy priorities.
+5. **Lifecycle-aware archival intelligence** — every tier returns a decomposable score, and caller-supplied lifecycle cost/energy/latency can influence both tier selection and codec optimisation.
+6. **Held-out research validation** — calibration seeds are disjoint from evaluation seeds, budgeted search is deterministic and order-independent, paired strategy effects are reported on identical channel realizations, and policy learning is evaluated on unseen records.
 
-`plan_archive()` remains a lightweight explainable heuristic. `optimize_archive_plan()` and the `oligoark optimize-plan` command perform a real measured search over candidate configurations and return the selected tier, redundancy scheme, sequence constraints and reconstruction strategy. Reconstruction remains extensible through typed `ReadReconstructor` and `EdgeScorer` interfaces so future PyTorch/PyTorch-Geometric models can plug in without changing the archive format.
+`plan_archive()` remains a lightweight explainable heuristic. `optimize_archive_plan()` performs a real measured search, while `evaluate_optimized_archive_plan()` freezes the calibrated winner and measures it on disjoint held-out seeds. The CLI and API return the selected tier, redundancy scheme, sequence constraints, reconstruction strategy, search metadata, and per-candidate objective breakdowns. Reconstruction remains extensible through typed `ReadReconstructor` and `EdgeScorer` interfaces so future PyTorch/PyTorch-Geometric models can plug in without changing the archive format.
 
 The independently implemented **fountain-style seeded XOR/peeling baseline is now integrated into the real archive/recovery pipeline** and can be selected as `fountain` or combined with XOR as `hybrid`. It is not represented as the published DNA Fountain implementation.
 
@@ -43,14 +44,18 @@ flowchart LR
   J --> K[SHA-256 verification]
 
   L[Channel profile] --> M[Heuristic codec policy]
-  N[Candidate search space] --> O[Measured codec optimizer]
+  N[Candidate search space] --> O[Balanced/full-grid measured optimizer]
   L --> O
-  O --> B
+  T[Calibration seeds] --> O
+  O --> U[Frozen codec plan]
+  V[Disjoint evaluation seeds] --> W[Held-out validation]
+  U --> W
+  U --> B
 
   P[Workload profile] --> Q[AI-Native Archival Intelligence]
-  R[User economic assumptions] --> Q
+  R[User economic/lifecycle assumptions] --> Q
   L --> Q
-  Q --> S[Explainable tier + codec plan]
+  Q --> S[Decomposed tier + codec plan]
 ```
 
 See [`docs/architecture.md`](docs/architecture.md) for module-level details.
@@ -142,11 +147,14 @@ oligoark optimize-plan demo.txt \
   --retention-years 100 \
   --substitution 0.01 \
   --dropout 0.05 \
-  --seeds 2026,2027 \
+  --calibration-seeds 9201,9202,9203,9204 \
+  --evaluation-seeds 2026,2027,2028,2029 \
+  --search-method balanced \
+  --search-seed 5050 \
   --max-candidates 24
 ```
 
-`optimize-plan` evaluates actual archive/simulation/recovery candidates and accepts success only after SHA-256 verification.
+`optimize-plan` evaluates actual archive/simulation/recovery candidates and accepts success only after SHA-256 verification. `--seeds` is retained as a backward-compatible alias for calibration seeds; when `--evaluation-seeds` is supplied, the calibrated winner is frozen before unseen-seed evaluation.
 
 ### Storage-tier recommendation
 
@@ -232,6 +240,7 @@ Open `/docs` for the generated OpenAPI UI. Endpoints include:
 - `POST /encode`
 - `POST /recover`
 - `POST /recover-reads`
+- `POST /reconstruction-diagnostics`
 - `POST /simulate`
 - `POST /recommend`
 - `POST /policy`
@@ -262,18 +271,39 @@ Metadata records the OligoArk version, Python version, platform, deterministic s
 
 ### Experiment and ablation framework
 
-The single-seed benchmark is retained for continuity, while v0.4 adds multi-seed ablations:
+The continuity benchmark is retained, while v0.5 adds leakage-controlled held-out ablations:
 
 ```bash
 python benchmarks/run_experiments.py --profile smoke
 python benchmarks/run_experiments.py --profile publication
 ```
 
-The experiment framework compares **fixed**, **adaptive**, **adaptive + fountain/hybrid redundancy**, **adaptive + graph/alignment reconstruction**, and the **combined measured optimizer**. It records raw CSV/JSON, aggregated CSV/JSON, Wilson 95% recovery intervals, runtime, encoded overhead, strand/read counts and graph usage, plus reproducible plots. CI runs the smoke profile; the heavier publication profile is a manual GitHub Actions workflow.
+The experiment framework compares **fixed**, **adaptive**, **adaptive + fountain/hybrid redundancy**, **adaptive + graph/alignment reconstruction**, and the **combined measured optimizer**. Calibration seeds are disjoint from evaluation seeds. It records raw CSV/JSON, aggregated CSV/JSON, Wilson 95% recovery intervals, paired differences versus fixed on identical realizations, runtime, encoded overhead, strand/read counts, graph rescue, candidate-selection metadata, and reproducible plots. The publication workflow deterministically shards by payload size and aggregates all failures and successes.
+
+The same artifacts feed a held-out learning comparison between the deterministic heuristic, empirical instance-based model, ridge-regression model, and measured-search result:
+
+```bash
+python benchmarks/run_learning_evaluation.py --experiment-dir publication-results
+python benchmarks/run_graph_rescue.py
+```
 
 `benchmarks/run_verified_demo.py` separately exercises adaptive optimisation followed by substitution, indel, dropout and mixed corruption with graph/alignment reconstruction and SHA-256 verification.
 
 See [`docs/benchmarking.md`](docs/benchmarking.md) for interpretation rules.
+
+## Research Validation
+
+The v0.5 publication workflow was executed on commit `180618c9f5bdc1260d00c0b60a09dd6442c1a569` with Python 3.13.15 on Linux. It evaluated **960 held-out trials**: 3 payload sizes (512, 2048 and 8192 bytes) × 8 channel regimes × 5 strategies × 8 evaluation seeds. The combined optimizer used calibration seeds `9201..9204`, completely disjoint from evaluation seeds `2026..2033`, and evaluated 24 deterministically balanced candidates from a 360-candidate logical search space per payload/regime. The artifact also preserves 576 calibration-candidate evaluations and their objective breakdowns.
+
+Across all 192 held-out trials per strategy, SHA-256-verified recovery was: **adaptive+fountain/hybrid 66.7%** (95% Wilson CI 59.7–73.0%), **adaptive 59.9%** (52.8–66.6%), **adaptive+graph 59.9%** (52.8–66.6%), **combined measured optimizer 57.3%** (50.2–64.1%), and **fixed 45.8%** (38.9–52.9%). Mean encoded-overhead ratios were 2.114, 1.557, 1.557, 1.895 and 1.492 respectively; mean software runtimes were 0.959 s, 0.728 s, 3.379 s, 1.841 s and 0.036 s in that run environment. These runtimes are not cross-machine performance claims.
+
+The result is deliberately reported even where it is negative. The combined optimizer improved over fixed overall, but **did not beat adaptive+fountain/hybrid** and showed calibration-to-held-out degradation in dropout, indel and mixed regimes. For example, at 10% configured dropout it selected a low-overhead XOR configuration after 100% calibration recovery, but held-out recovery fell with payload size; this is an observed generalization limitation of the current calibration budget rather than a hidden success.
+
+Controlled reconstruction produced the required verified rescue chain in **2/2 constructed cases**. In both cases direct recovery failed, an explicit 7-node/21-edge graph formed one component, consensus was generated, and normal archive recovery passed SHA-256. In the substitution case both medoid and alignment consensus rescued recovery; in the insertion/deletion case **medoid failed while alignment-aware consensus succeeded**. In the broader 960-trial publication sweep, however, graph reconstruction did not produce additional direct-failure rescues, so the controlled rescue result is evidence of capability rather than evidence of broad superiority.
+
+Held-out policy learning trained on seeds 2026–2029 and the first four channel regimes, then tested on seeds 2030–2033 and four unseen channel regimes. On 48 held-out groups, the heuristic and ridge model each recovered **41.7%** with mean regret 0.0520; the empirical model recovered **37.5%** with regret 0.0740; and the measured-search result recovered **39.6%** with regret 0.1630. The learned ridge baseline therefore did **not** outperform the heuristic in this experiment.
+
+All numbers above are software/simulation results from the preserved GitHub Actions publication artifact, not wet-lab DNA-storage measurements or physical-media claims.
 
 ## Tests and quality gates
 
@@ -299,7 +329,7 @@ The test suite includes unit, integration, API, CLI, reconstruction plug-in, arc
 - GC range and maximum homopolymer length are configurable **hard software constraints** enforced by deterministic mask search. They are research constraints, not claims about a particular synthesis platform.
 - Reed–Solomon protects frame bytes; archive-level redundancy can be `none`, `xor`, `fountain`, or `hybrid`. The fountain implementation is an LT-style research baseline, not DNA Fountain.
 - The simulator uses independent substitution/insertion/deletion/dropout/duplication probabilities. Real channels can be correlated and platform-specific.
-- The default reconstruction baseline builds an explicit weighted similarity graph, uses connected components, and applies medoid-anchored global-alignment consensus. It improves the algorithmic treatment of indels, but it is not claimed to match state-of-the-art reconstruction or HEDGES-style indel coding.
+- The default reconstruction baseline builds an explicit weighted similarity graph, uses connected components, and applies medoid-anchored global-alignment consensus. v0.5 records direct/medoid/alignment ablations and graph diagnostics, but it is not claimed to match state-of-the-art reconstruction or HEDGES-style indel coding.
 - The `dna_future` storage tier is scenario analysis only. It is not a statement that DNA is presently cheaper, faster, or operationally superior to SSD/object/tape.
 - Economic defaults are neutral. Production decisions require externally sourced and time-appropriate cost, energy, durability, and retrieval assumptions.
 - The reference API is a research service, not a hardened multi-tenant production system.
@@ -307,7 +337,7 @@ The test suite includes unit, integration, API, CLI, reconstruction plug-in, arc
 ## Research roadmap
 
 1. Evaluate learned `EdgeScorer`/`ReadReconstructor` plug-ins against the new explicit graph/alignment baseline.
-2. Calibrate the search space and learned policy models on published physical DNA-storage datasets rather than simulation alone.
+2. Validate the search space and learned policy models on suitably licensed published physical DNA-storage read/error datasets rather than simulation alone.
 3. Add platform-specific synthesis/sequencing channel models and correlation structure.
 4. Compare the LT-style fountain baseline with published rateless/fountain implementations under common constraints.
 5. Run lifecycle sensitivity analyses from dated externally sourced cost/energy assumptions across 10/50/100/500-year horizons.
@@ -325,7 +355,7 @@ OligoArk is independently implemented and does not vendor or copy another DNA-st
 - Yazdi, Gabrys & Milenkovic (2017), *Portable and Error-Free DNA-Based Data Storage*, **Scientific Reports**. DOI: `10.1038/s41598-017-05188-1`.
 - Organick et al. (2018), *Random access in large-scale DNA data storage*, **Nature Biotechnology**. DOI: `10.1038/nbt.4079`.
 
-See [`docs/research.md`](docs/research.md) for research framing and claim boundaries.
+See [`docs/research.md`](docs/research.md) for research framing and claim boundaries, and [`docs/benchmarking.md`](docs/benchmarking.md) for the exact v0.5 held-out design.
 
 ## Security
 

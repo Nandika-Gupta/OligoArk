@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.5.0 - 2026-10-04
+
+### Added
+- Disjoint calibration and held-out evaluation for the measured optimizer.
+- Canonical order-independent balanced candidate sampling plus full-grid search.
+- Explicit optimizer terms for redundancy and optional caller-supplied lifecycle cost, energy, retrieval cost, and latency.
+- Per-candidate objective contribution breakdowns and search metadata.
+- Fully decomposable per-tier storage score contributions.
+- Controlled graph-rescue validation comparing direct, medoid-graph, and alignment-graph recovery.
+- Graph diagnostics for nodes, candidate pairs, edges, connected components, cluster sizes, consensus lengths, and runtime.
+- Experiment-record to policy-learning dataset conversion and held-out learning evaluation.
+- Deterministic ridge-model serialization and restoration.
+- Paired strategy effects on identical simulated channel realizations.
+- Publication plots for error/recovery, overhead/recovery, runtime/recovery, graph rescue, ablation, and optimizer generalization.
+- Payload-sharded publication workflow with merged 90-day artifacts.
+- CLI/API controls for calibration/evaluation seeds, search method/seed, objective weights, and reconstruction diagnostics.
+
+### Validation
+- Executed the publication workflow on commit `180618c9f5bdc1260d00c0b60a09dd6442c1a569`: 960 held-out trials, 576 retained calibration-candidate evaluations, 3 payload sizes, 8 channel regimes, 5 strategies, disjoint calibration/evaluation seeds, paired effects, Wilson intervals, graph-rescue diagnostics, and held-out policy-learning outputs.
+- Best overall held-out recovery in this software experiment was adaptive+fountain/hybrid at 66.7% (128/192; Wilson 95% CI 59.7–73.0%). Combined measured search recovered 57.3% (110/192) and did not outperform the simpler redundancy baseline.
+- Controlled alignment-graph reconstruction rescued 2/2 direct-failure cases; medoid consensus also rescued the substitution case but failed the insertion/deletion case that alignment consensus recovered.
+- Ridge policy learning matched the heuristic on the unseen seed/channel split (41.7% recovery each) rather than outperforming it; negative results are retained.
+
+### Changed
+- Version advanced to 0.5.0.
+- Publication evaluation seeds are explicitly disjoint from optimizer calibration seeds.
+- Lifecycle terms can influence the codec objective when caller-supplied physical assumptions are provided.
+- Publication validation distinguishes calibration score from unseen-seed recovery.
+
 ## 0.4.0 - 2026-10-04
 
 ### Added
