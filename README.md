@@ -1,6 +1,6 @@
 # OligoArk 🧬
 
-[![CI](https://github.com/sauravsingla/OligoArk/actions/workflows/ci.yml/badge.svg)](https://github.com/sauravsingla/OligoArk/actions/workflows/ci.yml)
+[![CI](https://github.com/sauravsingla/OligoArk/actions/workflows/ci.yml/badge.svg)](https://github.com/sauravsingla/OligoArk/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/oligoark.svg)](https://pypi.org/project/oligoark/)
 
 **AI-Native DNA Archival Storage** — an open-source research framework for adaptive DNA encoding, software channel simulation, graph-assisted reconstruction, empirical policy learning, and explainable heterogeneous storage tiering.
 
@@ -52,7 +52,23 @@ See [`docs/architecture.md`](docs/architecture.md) for module-level details.
 
 ## Install
 
+For normal use, install the published package from PyPI:
+
 ```bash
+pip install oligoark
+```
+
+Optional API support:
+
+```bash
+pip install "oligoark[api]"
+```
+
+For contributors and research development:
+
+```bash
+git clone https://github.com/sauravsingla/OligoArk.git
+cd OligoArk
 python -m venv .venv
 source .venv/bin/activate  # Windows PowerShell: .venv\Scripts\Activate.ps1
 python -m pip install -U pip
