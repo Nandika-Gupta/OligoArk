@@ -22,7 +22,13 @@ from .intelligence import (
 )
 from .logging_utils import configure_logging
 from .optimizer import CodecSearchSpace, OptimizationWeights
+from .physical import (
+    PhysicalDatasetManifest,
+    evaluate_physical_reconstruction,
+    read_sequences,
+)
 from .policy import ChannelProfile, PolicyObjective, recommend_codec_policy
+from .reconstruct import TraceConsensusReconstructor
 from .simulator import SimulationConfig, simulate_channel
 from .tiering import (
     EconomicAssumptions,
@@ -75,6 +81,7 @@ def _simulate(args: argparse.Namespace) -> None:
         args.dropout,
         args.duplicate,
         args.seed,
+        args.copies_per_strand,
     )
     reads = simulate_channel(archive.strands, cfg)
     Path(args.output).write_text("\n".join(reads) + "\n", encoding="utf-8")
@@ -88,10 +95,16 @@ def _read_reads(path: str) -> list[str]:
 
 def _recover_reads(args: argparse.Namespace) -> None:
     archive = DNAArchive.load(args.archive)
+    reconstructor = (
+        TraceConsensusReconstructor()
+        if args.reconstruction_mode == "trace"
+        else None
+    )
     recovered, report = recover_from_reads(
         archive,
         _read_reads(args.reads),
         similarity_threshold=args.similarity_threshold,
+        reconstructor=reconstructor,
     )
     Path(args.output).write_bytes(recovered)
     print(json.dumps({"output": args.output, **report.to_dict()}, indent=2))
@@ -102,6 +115,19 @@ def _diagnose_reconstruction(args: argparse.Namespace) -> None:
         DNAArchive.load(args.archive),
         _read_reads(args.reads),
         threshold=args.similarity_threshold,
+    )
+    print(json.dumps(result.to_dict(), indent=2))
+
+
+def _physical_evaluate(args: argparse.Namespace) -> None:
+    manifest = PhysicalDatasetManifest.load(args.manifest)
+    reads = read_sequences(args.reads, max_sequences=args.max_reads)
+    references = read_sequences(args.references)
+    result = evaluate_physical_reconstruction(
+        manifest,
+        reads,
+        references,
+        assignment_threshold=args.assignment_threshold,
     )
     print(json.dumps(result.to_dict(), indent=2))
 
@@ -201,7 +227,13 @@ def _plan(args: argparse.Namespace) -> None:
 
 
 def _search_space(args: argparse.Namespace) -> CodecSearchSpace:
+    modes = tuple(
+        item.strip()
+        for item in args.reconstruction_modes.split(",")
+        if item.strip()
+    )
     return CodecSearchSpace(
+        reconstruction_modes=modes,
         max_candidates=args.max_candidates,
         search_method=args.search_method,
         search_seed=args.search_seed,
@@ -224,6 +256,7 @@ def _optimize_plan(args: argparse.Namespace) -> None:
             calibration_seeds=calibration_seeds,
             evaluation_seeds=_parse_seeds(args.evaluation_seeds),
             duplicate_rate=args.duplicate,
+            copies_per_strand=args.copies_per_strand,
             economics=economics,
             lifecycle=lifecycle,
             search_space=search_space,
@@ -242,6 +275,7 @@ def _optimize_plan(args: argparse.Namespace) -> None:
         search_space=search_space,
         weights=weights,
         duplicate_rate=args.duplicate,
+        copies_per_strand=args.copies_per_strand,
     )
     print(json.dumps(optimized.to_dict(), indent=2))
 
@@ -305,6 +339,7 @@ def build_parser() -> argparse.ArgumentParser:
     command.add_argument("--output", default="reads.txt")
     _add_channel_arguments(command)
     command.add_argument("--duplicate", type=float, default=0.0)
+    command.add_argument("--copies-per-strand", type=int, default=1)
     command.add_argument("--seed", type=int, default=7)
     command.set_defaults(func=_simulate)
 
@@ -313,16 +348,32 @@ def build_parser() -> argparse.ArgumentParser:
     command.add_argument("reads")
     command.add_argument("--output", required=True)
     command.add_argument("--similarity-threshold", type=float, default=0.90)
+    command.add_argument(
+        "--reconstruction-mode",
+        choices=("graph", "trace"),
+        default="graph",
+    )
     command.set_defaults(func=_recover_reads)
 
     command = sub.add_parser(
         "diagnose-reconstruction",
-        help="compare direct, medoid-graph, and alignment-graph recovery",
+        help="compare direct, medoid, alignment, and iterative-trace recovery",
     )
     command.add_argument("archive")
     command.add_argument("reads")
     command.add_argument("--similarity-threshold", type=float, default=0.90)
     command.set_defaults(func=_diagnose_reconstruction)
+
+    command = sub.add_parser(
+        "physical-evaluate",
+        help="compare reconstruction baselines on supplied physical FASTA/FASTQ reads",
+    )
+    command.add_argument("--manifest", default="datasets/dna_aeon.json")
+    command.add_argument("--reads", required=True)
+    command.add_argument("--references", required=True)
+    command.add_argument("--max-reads", type=int, default=5000)
+    command.add_argument("--assignment-threshold", type=float, default=0.70)
+    command.set_defaults(func=_physical_evaluate)
 
     command = sub.add_parser("inspect", help="show archive encoding and sequence statistics")
     command.add_argument("archive")
@@ -359,9 +410,19 @@ def build_parser() -> argparse.ArgumentParser:
     command.add_argument("--calibration-seeds")
     command.add_argument("--evaluation-seeds")
     command.add_argument("--duplicate", type=float, default=0.0)
+    command.add_argument("--copies-per-strand", type=int, default=1)
     command.add_argument("--max-candidates", type=int, default=24)
-    command.add_argument("--search-method", choices=("balanced", "full_grid"), default="balanced")
-    command.add_argument("--search-seed", type=int, default=5050)
+    command.add_argument(
+        "--search-method",
+        choices=("balanced", "balanced_robust", "full_grid"),
+        default="balanced_robust",
+    )
+    command.add_argument("--search-seed", type=int, default=6060)
+    command.add_argument(
+        "--reconstruction-modes",
+        default="direct,graph,trace",
+        help="comma-separated subset of direct,graph,trace",
+    )
     command.add_argument("--weights-json")
     command.set_defaults(func=_optimize_plan)
 

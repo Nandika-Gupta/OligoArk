@@ -49,6 +49,8 @@ def _record(raw: dict[str, object]) -> ExperimentRecord:
             if raw.get("selection_search_method") is not None
             else None
         ),
+        reconstruction_mode=str(raw.get("reconstruction_mode", "direct")),
+        copies_per_strand=int(cast(int, raw.get("copies_per_strand", 1))),
     )
 
 
@@ -66,9 +68,19 @@ def main() -> None:
     evaluation_seeds = tuple(int(seed) for seed in metadata["evaluation_seeds"])
     if len(evaluation_seeds) < 2:
         raise ValueError("learning evaluation requires at least two held-out experiment seeds")
-    split = max(1, len(evaluation_seeds) // 2)
-    training_seeds = evaluation_seeds[:split]
-    test_seeds = evaluation_seeds[split:]
+    if len(evaluation_seeds) >= 6:
+        training_count = max(2, (len(evaluation_seeds) * 2) // 5)
+        validation_count = max(1, len(evaluation_seeds) // 5)
+        training_seeds = evaluation_seeds[:training_count]
+        validation_seeds = evaluation_seeds[
+            training_count : training_count + validation_count
+        ]
+        test_seeds = evaluation_seeds[training_count + validation_count :]
+    else:
+        split = max(1, len(evaluation_seeds) // 2)
+        training_seeds = evaluation_seeds[:split]
+        validation_seeds = ()
+        test_seeds = evaluation_seeds[split:]
     if not test_seeds:
         raise ValueError("learning evaluation needs non-empty test seeds")
 
@@ -92,6 +104,7 @@ def main() -> None:
     result = evaluate_learning_from_records(
         records,
         training_seeds=training_seeds,
+        validation_seeds=validation_seeds,
         test_seeds=test_seeds,
         training_scenarios=training_scenarios,
         test_scenarios=test_scenarios,
@@ -108,6 +121,9 @@ def main() -> None:
         writer.writerows(summary_rows)
     (output / "linear-model.json").write_text(
         json.dumps(result.linear_model_state, indent=2), encoding="utf-8"
+    )
+    (output / "kernel-model.json").write_text(
+        json.dumps(result.kernel_model_state, indent=2), encoding="utf-8"
     )
     print(json.dumps(result.to_dict(), indent=2))
 

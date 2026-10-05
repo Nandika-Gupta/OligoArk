@@ -65,6 +65,10 @@ def _calibration_candidate_rows(
                 "trials": evaluation.trials,
                 "verified_successes": evaluation.verified_successes,
                 "recovery_rate": evaluation.recovery_rate,
+                "fold_recovery_rates": ",".join(
+                    f"{value:.6f}" for value in evaluation.fold_recovery_rates
+                ),
+                "recovery_instability": evaluation.recovery_instability,
                 "encoded_nucleotides": evaluation.encoded_nucleotides,
                 "overhead_ratio": evaluation.overhead_ratio,
                 "redundancy_ratio": evaluation.redundancy_ratio,
@@ -233,6 +237,10 @@ def main() -> None:
     parser.add_argument("--profile", choices=("smoke", "publication"), default="smoke")
     parser.add_argument("--output-dir", default="experiment-results")
     parser.add_argument("--payload-size", type=int)
+    parser.add_argument("--scenario")
+    parser.add_argument("--strategies")
+    parser.add_argument("--seed-shard-index", type=int)
+    parser.add_argument("--seed-shard-count", type=int)
     args = parser.parse_args()
 
     profile = smoke_profile() if args.profile == "smoke" else publication_profile()
@@ -240,6 +248,38 @@ def main() -> None:
         if args.payload_size not in profile.payload_sizes:
             raise ValueError("requested payload size is not part of the selected profile")
         profile = replace(profile, payload_sizes=(args.payload_size,))
+    if args.scenario is not None:
+        selected = tuple(
+            scenario for scenario in profile.scenarios if scenario.name == args.scenario
+        )
+        if not selected:
+            raise ValueError("requested scenario is not part of the selected profile")
+        profile = replace(profile, scenarios=selected)
+    if args.strategies is not None:
+        requested_strategies = tuple(
+            item.strip() for item in args.strategies.split(",") if item.strip()
+        )
+        if not requested_strategies:
+            raise ValueError("at least one strategy must be requested")
+        unknown = sorted(set(requested_strategies) - set(profile.strategies))
+        if unknown:
+            raise ValueError(f"unknown requested strategy or strategies: {unknown}")
+        profile = replace(profile, strategies=requested_strategies)
+    if (args.seed_shard_index is None) != (args.seed_shard_count is None):
+        raise ValueError("seed shard index and count must be supplied together")
+    if args.seed_shard_count is not None:
+        if args.seed_shard_count < 1:
+            raise ValueError("seed shard count must be positive")
+        if args.seed_shard_index is None or not 0 <= args.seed_shard_index < args.seed_shard_count:
+            raise ValueError("seed shard index must be within the shard count")
+        selected_seeds = tuple(
+            seed
+            for index, seed in enumerate(profile.evaluation_seeds)
+            if index % args.seed_shard_count == args.seed_shard_index
+        )
+        if not selected_seeds:
+            raise ValueError("seed shard selected no evaluation seeds")
+        profile = replace(profile, seeds=selected_seeds)
     bundle = run_experiment_bundle(profile)
     records = list(bundle.records)
     calibrations = list(bundle.calibrations)
@@ -258,13 +298,16 @@ def main() -> None:
     (output / "paired-effects.json").write_text(
         json.dumps(effect_rows, indent=2), encoding="utf-8"
     )
-    (output / "calibration.json").write_text(
-        json.dumps(calibration_rows, indent=2), encoding="utf-8"
-    )
+    if calibration_rows:
+        (output / "calibration.json").write_text(
+            json.dumps(calibration_rows, indent=2), encoding="utf-8"
+        )
     _write_csv(output / "raw.csv", raw_rows)
     _write_csv(output / "summary.csv", summary_rows)
-    _write_csv(output / "paired-effects.csv", effect_rows)
-    _write_csv(output / "calibration-candidates.csv", calibration_candidate_rows)
+    if effect_rows:
+        _write_csv(output / "paired-effects.csv", effect_rows)
+    if calibration_candidate_rows:
+        _write_csv(output / "calibration-candidates.csv", calibration_candidate_rows)
 
     metadata = {
         "oligoark_version": __version__,
@@ -274,6 +317,8 @@ def main() -> None:
         "profile": args.profile,
         "calibration_seeds": list(profile.calibration_seeds),
         "evaluation_seeds": list(profile.evaluation_seeds),
+        "seed_shard_index": args.seed_shard_index,
+        "seed_shard_count": args.seed_shard_count,
         "seed_sets_disjoint": not bool(
             set(profile.calibration_seeds) & set(profile.evaluation_seeds)
         ),
@@ -282,7 +327,11 @@ def main() -> None:
         "optimizer_search_method": profile.optimizer_search_method,
         "optimizer_search_seed": profile.optimizer_search_seed,
         "optimizer_max_candidates": profile.optimizer_max_candidates,
-        "calibration_payload_limit_bytes": 256,
+        "calibration_payload_limit_bytes": max(
+            (item.calibration_payload_size for item in calibrations),
+            default=0,
+        ),
+        "calibration_payload_variants": 3,
         "calibration_record_count": len(calibrations),
         "scenarios": [asdict(scenario) for scenario in profile.scenarios],
         "claim_scope": "software simulation only; no wet-lab performance is implied",

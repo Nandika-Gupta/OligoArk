@@ -39,6 +39,7 @@ from .intelligence import (
 )
 from .learning import (
     EmpiricalPolicyModel,
+    KernelUtilityPolicyModel,
     LearnedPolicyRecommendation,
     LinearPolicyRecommendation,
     LinearUtilityPolicyModel,
@@ -62,6 +63,12 @@ from .optimizer import (
     optimize_codec,
     select_candidate_specs,
 )
+from .physical import (
+    PhysicalDatasetManifest,
+    PhysicalReconstructionSummary,
+    evaluate_physical_reconstruction,
+    read_sequences,
+)
 from .policy import ChannelProfile, CodecPolicy, PolicyObjective, recommend_codec_policy
 from .reconstruct import (
     EdgeScorer,
@@ -71,9 +78,11 @@ from .reconstruct import (
     ReadReconstructor,
     ReconstructionResult,
     SimilarityGraph,
+    TraceConsensusReconstructor,
     alignment_consensus,
     build_similarity_graph,
     global_align,
+    iterative_trace_consensus,
     medoid_consensus,
 )
 from .tiering import (
@@ -116,6 +125,7 @@ __all__ = [
     "GraphRescueComparison",
     "HeldOutOptimizedPlan",
     "HeldOutTrial",
+    "KernelUtilityPolicyModel",
     "LearnedPolicyRecommendation",
     "LearningEvaluationResult",
     "LearningMethodSummary",
@@ -129,6 +139,8 @@ __all__ = [
     "OptimizationResult",
     "OptimizationWeights",
     "OptimizedArchivalPlan",
+    "PhysicalDatasetManifest",
+    "PhysicalReconstructionSummary",
     "PolicyObjective",
     "PolicyObservation",
     "ReadReconstructor",
@@ -142,6 +154,7 @@ __all__ = [
     "TierLifecycleAssumption",
     "TierRecommendation",
     "TierScoreBreakdown",
+    "TraceConsensusReconstructor",
     "WorkloadProfile",
     "aggregate_experiments",
     "alignment_consensus",
@@ -152,7 +165,9 @@ __all__ = [
     "enumerate_candidate_specs",
     "evaluate_learning_from_records",
     "evaluate_optimized_archive_plan",
+    "evaluate_physical_reconstruction",
     "global_align",
+    "iterative_trace_consensus",
     "medoid_consensus",
     "objective_from_workload",
     "optimize_archive_plan",
@@ -164,6 +179,7 @@ __all__ = [
     "recover_bytes",
     "recover_from_reads",
     "recommend_codec_policy",
+    "read_sequences",
     "recommend_storage_tier",
     "run_experiment_bundle",
     "run_experiments",
@@ -172,4 +188,4 @@ __all__ = [
     "wilson_interval",
 ]
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"

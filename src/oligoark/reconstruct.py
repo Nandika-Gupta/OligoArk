@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from collections import Counter
 from dataclasses import dataclass, field
@@ -167,6 +168,17 @@ def _qgrams(sequence: str, width: int = 5) -> frozenset[str]:
     )
 
 
+def _qgram_counts(sequence: str, width: int) -> Counter[str]:
+    if width < 1:
+        raise ValueError("qgram width must be positive")
+    if len(sequence) < width:
+        return Counter({sequence: 1})
+    return Counter(
+        sequence[index : index + width]
+        for index in range(len(sequence) - width + 1)
+    )
+
+
 def _jaccard(left: frozenset[str], right: frozenset[str]) -> float:
     union = left | right
     if not union:
@@ -189,30 +201,71 @@ def build_similarity_graph(
         raise ValueError("qgram_width must be positive")
     resolved_scorer = scorer or LevenshteinEdgeScorer()
     nodes = tuple(reads)
-    signatures = [_qgrams(read, qgram_width) for read in nodes]
-    prefilter_threshold = max(0.05, threshold - 0.45)
     edges: list[GraphEdge] = []
-    candidate_pairs = 0
 
-    for left in range(len(nodes)):
-        for right in range(left + 1, len(nodes)):
-            candidate_pairs += 1
-            max_length = max(1, len(nodes[left]), len(nodes[right]))
-            length_similarity = 1.0 - abs(len(nodes[left]) - len(nodes[right])) / max_length
+    all_pairs = [
+        (left, right)
+        for left in range(len(nodes))
+        for right in range(left + 1, len(nodes))
+    ]
+    if use_qgram_prefilter:
+        signatures = [_qgram_counts(read, qgram_width) for read in nodes]
+        postings: dict[str, list[tuple[int, int]]] = {}
+        for index, signature in enumerate(signatures):
+            for qgram, count in signature.items():
+                postings.setdefault(qgram, []).append((index, count))
+
+        shared_counts: dict[tuple[int, int], int] = {}
+        for entries in postings.values():
+            for offset, (left, left_count) in enumerate(entries):
+                for right, right_count in entries[offset + 1 :]:
+                    pair = (left, right)
+                    shared_counts[pair] = (
+                        shared_counts.get(pair, 0) + min(left_count, right_count)
+                    )
+
+        candidate_pair_indexes: list[tuple[int, int]] = []
+        for left, right in all_pairs:
+            left_length = len(nodes[left])
+            right_length = len(nodes[right])
+            max_length = max(1, left_length, right_length)
+            length_similarity = 1.0 - abs(left_length - right_length) / max_length
             if length_similarity < threshold:
                 continue
-            if (
-                use_qgram_prefilter
-                and _jaccard(signatures[left], signatures[right]) < prefilter_threshold
-            ):
+            if min(left_length, right_length) < qgram_width:
+                candidate_pair_indexes.append((left, right))
                 continue
-            weight = resolved_scorer.score(nodes[left], nodes[right])
-            if weight >= threshold:
-                edges.append(GraphEdge(left, right, weight))
+
+            max_edit_distance = math.floor(
+                (1.0 - threshold) * max_length + 1e-12
+            )
+            left_qgrams = left_length - qgram_width + 1
+            right_qgrams = right_length - qgram_width + 1
+            required_shared = math.ceil(
+                (
+                    left_qgrams
+                    + right_qgrams
+                    - 2 * qgram_width * max_edit_distance
+                )
+                / 2
+            )
+            if required_shared <= 0 or shared_counts.get((left, right), 0) >= required_shared:
+                candidate_pair_indexes.append((left, right))
+    else:
+        candidate_pair_indexes = all_pairs
+
+    for left, right in candidate_pair_indexes:
+        max_length = max(1, len(nodes[left]), len(nodes[right]))
+        length_similarity = 1.0 - abs(len(nodes[left]) - len(nodes[right])) / max_length
+        if length_similarity < threshold:
+            continue
+        weight = resolved_scorer.score(nodes[left], nodes[right])
+        if weight >= threshold:
+            edges.append(GraphEdge(left, right, weight))
     return SimilarityGraph(
         nodes=nodes,
         edges=tuple(edges),
-        candidate_pairs=candidate_pairs,
+        candidate_pairs=len(candidate_pair_indexes),
     )
 
 
@@ -254,17 +307,15 @@ def medoid_consensus(cluster: list[str]) -> str:
     return "".join(chars)
 
 
-def alignment_consensus(cluster: list[str]) -> str:
-    """Medoid-anchored alignment consensus that can correct modest insertion/deletion noise."""
+def _alignment_consensus_with_reference(cluster: list[str], reference: str) -> str:
+    """Align every trace to a supplied reference and vote over bases and insertion slots."""
     if not cluster:
         raise ValueError("cluster must not be empty")
-    if len(cluster) == 1:
-        return cluster[0]
+    if not reference:
+        raise ValueError("reference must not be empty")
 
-    reference = _medoid(cluster)
     base_votes = [Counter[str]() for _ in reference]
     insertion_votes = [Counter[str]() for _ in range(len(reference) + 1)]
-
     for read in sorted(cluster):
         aligned_reference, aligned_read = global_align(reference, read)
         per_read_insertions = [""] * (len(reference) + 1)
@@ -295,6 +346,37 @@ def alignment_consensus(cluster: list[str]) -> str:
     if tail:
         output.append(tail)
     return "".join(output)
+
+
+def alignment_consensus(cluster: list[str]) -> str:
+    """Single-pass medoid-anchored alignment consensus retained as a v0.5 baseline."""
+    if not cluster:
+        raise ValueError("cluster must not be empty")
+    if len(cluster) == 1:
+        return cluster[0]
+    return _alignment_consensus_with_reference(cluster, _medoid(cluster))
+
+
+def iterative_trace_consensus(cluster: list[str], *, rounds: int = 3) -> str:
+    """Iteratively refine a trace consensus using the previous consensus as reference.
+
+    This deterministic baseline is intended for modest insertion/deletion noise. It is
+    not a probabilistic trace-reconstruction algorithm and is not claimed state of art.
+    """
+    if not cluster:
+        raise ValueError("cluster must not be empty")
+    if rounds < 1:
+        raise ValueError("rounds must be positive")
+    if len(cluster) == 1:
+        return cluster[0]
+
+    reference = _medoid(cluster)
+    for _ in range(rounds):
+        updated = _alignment_consensus_with_reference(cluster, reference)
+        if updated == reference:
+            break
+        reference = updated
+    return reference
 
 
 @dataclass(frozen=True)
@@ -339,6 +421,92 @@ class GraphConsensusReconstructor:
             node_count=len(graph.nodes),
             candidate_pairs=graph.candidate_pairs,
             consensus_lengths=tuple(len(read) for read in consensus_reads),
+            runtime_seconds=round(time.perf_counter() - started, 8),
+        )
+
+
+@dataclass(frozen=True)
+class TraceConsensusReconstructor:
+    """Multi-threshold explicit-graph reconstruction with iterative trace consensus.
+
+    Multiple thresholds intentionally generate multiple candidate consensuses. Downstream
+    frame CRC, ECC, and archive SHA-256 verification remain the acceptance gate.
+    """
+
+    thresholds: tuple[float, ...] = (0.94, 0.90, 0.86)
+    scorer: EdgeScorer = field(default_factory=LevenshteinEdgeScorer)
+    qgram_width: int = 5
+    use_qgram_prefilter: bool = True
+    rounds: int = 3
+    minimum_component_size: int = 2
+
+    def _validate(self) -> None:
+        if not self.thresholds:
+            raise ValueError("thresholds must not be empty")
+        if any(not 0 <= threshold <= 1 for threshold in self.thresholds):
+            raise ValueError("thresholds must be between 0 and 1")
+        if self.qgram_width < 1:
+            raise ValueError("qgram_width must be positive")
+        if self.rounds < 1:
+            raise ValueError("rounds must be positive")
+        if self.minimum_component_size < 2:
+            raise ValueError("minimum_component_size must be at least 2")
+
+    def reconstruct(self, reads: list[str]) -> ReconstructionResult:
+        self._validate()
+        started = time.perf_counter()
+        candidates: list[str] = []
+        seen_candidates: set[str] = set()
+        processed_components: set[tuple[int, ...]] = set()
+        cluster_sizes: list[int] = []
+        component_count = 0
+        thresholds = sorted(set(self.thresholds), reverse=True)
+
+        base_graph = build_similarity_graph(
+            reads,
+            threshold=min(thresholds),
+            scorer=self.scorer,
+            qgram_width=self.qgram_width,
+            use_qgram_prefilter=self.use_qgram_prefilter,
+        )
+        for threshold in thresholds:
+            graph = SimilarityGraph(
+                nodes=base_graph.nodes,
+                edges=tuple(
+                    edge for edge in base_graph.edges if edge.weight >= threshold
+                ),
+                candidate_pairs=base_graph.candidate_pairs,
+            )
+            components = graph.connected_components()
+            component_count += len(components)
+
+            for component in components:
+                if (
+                    len(component) < self.minimum_component_size
+                    or component in processed_components
+                ):
+                    continue
+                processed_components.add(component)
+                cluster = [graph.nodes[index] for index in component]
+                cluster_sizes.append(len(cluster))
+                generated = (
+                    iterative_trace_consensus(cluster, rounds=self.rounds),
+                    alignment_consensus(cluster),
+                    medoid_consensus(cluster),
+                )
+                for candidate in generated:
+                    if candidate not in seen_candidates:
+                        seen_candidates.add(candidate)
+                        candidates.append(candidate)
+
+        return ReconstructionResult(
+            consensus_reads=candidates,
+            cluster_sizes=cluster_sizes,
+            edge_count=len(base_graph.edges),
+            component_count=component_count,
+            node_count=len(reads),
+            candidate_pairs=base_graph.candidate_pairs,
+            consensus_lengths=tuple(len(candidate) for candidate in candidates),
             runtime_seconds=round(time.perf_counter() - started, 8),
         )
 
