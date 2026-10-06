@@ -21,6 +21,7 @@ from oligoark.reconstruct import (
     global_align,
     iterative_trace_consensus,
     medoid_consensus,
+    multistart_trace_consensus,
 )
 
 DATASET_NAME = "Microsoft Clustered Nanopore Reads (CNR)"
@@ -34,7 +35,53 @@ TARGET_LENGTH = 110
 DEFAULT_SUBSET_SIZE = 96
 DEFAULT_COVERAGES = (1, 5, 10)
 DEFAULT_SEED = 20261005
-OLIGOARK_METHODS = ("direct", "medoid", "graph_alignment", "iterative_trace")
+DEFAULT_CALIBRATION_SEED = 20261006
+DEFAULT_CALIBRATION_SIZE = 48
+CALIBRATION_COVERAGES = (5, 10)
+MULTISTART_CANDIDATES: tuple[dict[str, object], ...] = (
+    {
+        "name": "a1-r2-bi",
+        "anchors": 1,
+        "rounds": 2,
+        "bidirectional": True,
+        "length_penalty": 1.0,
+    },
+    {
+        "name": "a2-r1-bi",
+        "anchors": 2,
+        "rounds": 1,
+        "bidirectional": True,
+        "length_penalty": 1.0,
+    },
+    {
+        "name": "a2-r2-bi",
+        "anchors": 2,
+        "rounds": 2,
+        "bidirectional": True,
+        "length_penalty": 1.0,
+    },
+    {
+        "name": "a3-r1-bi",
+        "anchors": 3,
+        "rounds": 1,
+        "bidirectional": True,
+        "length_penalty": 1.0,
+    },
+    {
+        "name": "a2-r2-forward",
+        "anchors": 2,
+        "rounds": 2,
+        "bidirectional": False,
+        "length_penalty": 1.0,
+    },
+)
+OLIGOARK_METHODS = (
+    "direct",
+    "medoid",
+    "graph_alignment",
+    "iterative_trace",
+    "multistart_trace",
+)
 
 
 def _sha256_file(path: Path) -> str:
@@ -109,8 +156,14 @@ def select_subset(
     subset_size: int,
     max_coverage: int,
     seed: int,
+    excluded_indices: set[int] | None = None,
 ) -> list[dict[str, Any]]:
-    eligible = [index for index, cluster in enumerate(clusters) if len(cluster) >= max_coverage]
+    excluded = excluded_indices or set()
+    eligible = [
+        index
+        for index, cluster in enumerate(clusters)
+        if len(cluster) >= max_coverage and index not in excluded
+    ]
     if len(eligible) < subset_size:
         raise ValueError(
             f"only {len(eligible)} clusters have at least {max_coverage} reads; "
@@ -166,7 +219,11 @@ def _choose_graph_candidate(reads: list[str]) -> str:
     return result.consensus_reads[best_index]
 
 
-def _reconstruct(method: str, reads: list[str]) -> str:
+def _reconstruct(
+    method: str,
+    reads: list[str],
+    consensus_config: dict[str, object] | None = None,
+) -> str:
     if method == "direct":
         return reads[0]
     if method == "medoid":
@@ -175,6 +232,17 @@ def _reconstruct(method: str, reads: list[str]) -> str:
         return _choose_graph_candidate(reads)
     if method == "iterative_trace":
         return iterative_trace_consensus(reads, rounds=3)
+    if method == "multistart_trace":
+        if consensus_config is None:
+            raise ValueError("multistart_trace requires a frozen consensus_config")
+        return multistart_trace_consensus(
+            reads,
+            target_length=TARGET_LENGTH,
+            anchors=int(consensus_config["anchors"]),
+            rounds=int(consensus_config["rounds"]),
+            bidirectional=bool(consensus_config["bidirectional"]),
+            length_penalty=float(consensus_config["length_penalty"]),
+        )
     raise ValueError(f"unknown worker method: {method}")
 
 
@@ -203,10 +271,11 @@ def _case_record(
 def run_worker(method: str, subset_json: Path, output: Path) -> None:
     payload = json.loads(subset_json.read_text(encoding="utf-8"))
     coverage = int(payload["coverage"])
+    consensus_config = payload.get("consensus_config")
     rows: list[dict[str, Any]] = []
     for record in payload["records"]:
         reads = [str(read) for read in record["reads"]]
-        reconstruction = _reconstruct(method, reads)
+        reconstruction = _reconstruct(method, reads, consensus_config)
         rows.append(
             _case_record(
                 method,
@@ -217,6 +286,111 @@ def run_worker(method: str, subset_json: Path, output: Path) -> None:
             )
         )
     output.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+
+
+
+def _evaluate_calibration_method(
+    records: list[dict[str, Any]],
+    *,
+    coverages: tuple[int, ...],
+    method: str,
+    consensus_config: dict[str, object] | None = None,
+) -> dict[str, Any]:
+    """Evaluate a candidate only on the disjoint calibration references."""
+    started = time.perf_counter()
+    successes = 0
+    distances: list[int] = []
+    per_coverage: list[dict[str, Any]] = []
+    for coverage in coverages:
+        coverage_successes = 0
+        coverage_distances: list[int] = []
+        for record in _records_for_coverage(records, coverage):
+            reads = [str(read) for read in record["reads"]]
+            reference = str(record["reference"])
+            reconstructed = _reconstruct(method, reads, consensus_config)
+            distance = edit_distance(reference, reconstructed)
+            coverage_successes += int(reconstructed == reference)
+            coverage_distances.append(distance)
+        successes += coverage_successes
+        distances.extend(coverage_distances)
+        per_coverage.append(
+            {
+                "coverage": coverage,
+                "successes": coverage_successes,
+                "trials": len(records),
+                "mean_edit_distance": round(
+                    statistics.fmean(coverage_distances),
+                    8,
+                ),
+            }
+        )
+    elapsed = time.perf_counter() - started
+    return {
+        "method": method,
+        "config": consensus_config,
+        "successes": successes,
+        "trials": len(records) * len(coverages),
+        "exact_recovery_rate": round(
+            successes / max(1, len(records) * len(coverages)),
+            8,
+        ),
+        "mean_edit_distance": round(statistics.fmean(distances), 8),
+        "runtime_seconds": round(elapsed, 6),
+        "per_coverage": per_coverage,
+    }
+
+
+def _calibrate_multistart(
+    records: list[dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+    """Choose the lightweight configuration before touching held-out references."""
+    baseline = _evaluate_calibration_method(
+        records,
+        coverages=CALIBRATION_COVERAGES,
+        method="iterative_trace",
+    )
+    candidates = [
+        _evaluate_calibration_method(
+            records,
+            coverages=CALIBRATION_COVERAGES,
+            method="multistart_trace",
+            consensus_config=dict(config),
+        )
+        for config in MULTISTART_CANDIDATES
+    ]
+    runtime_budget = max(
+        float(baseline["runtime_seconds"]) * 4.0,
+        float(baseline["runtime_seconds"]) + 2.0,
+    )
+    practical = [
+        candidate
+        for candidate in candidates
+        if float(candidate["runtime_seconds"]) <= runtime_budget
+    ]
+    if not practical:
+        raise RuntimeError("all multistart calibration candidates exceeded the runtime budget")
+    winner = min(
+        practical,
+        key=lambda candidate: (
+            -int(candidate["successes"]),
+            float(candidate["mean_edit_distance"]),
+            float(candidate["runtime_seconds"]),
+            str(candidate["config"]),
+        ),
+    )
+    improved = (
+        int(winner["successes"]) > int(baseline["successes"])
+        or (
+            int(winner["successes"]) == int(baseline["successes"])
+            and float(winner["mean_edit_distance"])
+            < float(baseline["mean_edit_distance"])
+        )
+    )
+    if not improved:
+        raise RuntimeError(
+            "no lightweight multistart candidate improved calibration accuracy/edit distance"
+        )
+    return winner, baseline, candidates
 
 
 def _timed_subprocess(command: list[str], timing_path: Path) -> tuple[float, float | None]:
@@ -434,6 +608,33 @@ def run_benchmark(args: argparse.Namespace) -> None:
         max_coverage=max_coverage,
         seed=args.seed,
     )
+    held_out_zero_based = {
+        int(record["cluster_index"]) - 1
+        for record in selected
+    }
+    calibration_records = select_subset(
+        centers,
+        clusters,
+        subset_size=args.calibration_size,
+        max_coverage=max_coverage,
+        seed=args.calibration_seed,
+        excluded_indices=held_out_zero_based,
+    )
+    calibration_ids = {
+        int(record["cluster_index"])
+        for record in calibration_records
+    }
+    held_out_ids = {
+        int(record["cluster_index"])
+        for record in selected
+    }
+    if calibration_ids & held_out_ids:
+        raise RuntimeError("calibration and held-out cluster IDs must be disjoint")
+
+    calibration_winner, calibration_baseline, calibration_candidates = (
+        _calibrate_multistart(calibration_records)
+    )
+    frozen_multistart_config = dict(calibration_winner["config"])
 
     selected_metadata = [
         {
@@ -443,8 +644,31 @@ def run_benchmark(args: argparse.Namespace) -> None:
         }
         for record in selected
     ]
+    calibration_metadata = [
+        {
+            "cluster_index": int(record["cluster_index"]),
+            "available_reads": int(record["available_reads"]),
+            "reference_sha256": _sha256_text(str(record["reference"])),
+        }
+        for record in calibration_records
+    ]
     (output_dir / "selected-clusters.json").write_text(
         json.dumps(selected_metadata, indent=2), encoding="utf-8"
+    )
+    (output_dir / "calibration-clusters.json").write_text(
+        json.dumps(calibration_metadata, indent=2), encoding="utf-8"
+    )
+    (output_dir / "calibration.json").write_text(
+        json.dumps(
+            {
+                "baseline": calibration_baseline,
+                "candidates": calibration_candidates,
+                "winner": calibration_winner,
+                "held_out_overlap_count": 0,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
     )
 
     all_rows: list[dict[str, Any]] = []
@@ -459,7 +683,13 @@ def run_benchmark(args: argparse.Namespace) -> None:
         coverage_records = _records_for_coverage(selected, coverage)
         subset_json = output_dir / f"subset-coverage-{coverage}.json"
         subset_json.write_text(
-            json.dumps({"coverage": coverage, "records": coverage_records}),
+            json.dumps(
+                {
+                    "coverage": coverage,
+                    "records": coverage_records,
+                    "consensus_config": frozen_multistart_config,
+                }
+            ),
             encoding="utf-8",
         )
         clusters_subset = output_dir / f"clusters-coverage-{coverage}.txt"
@@ -546,6 +776,70 @@ def run_benchmark(args: argparse.Namespace) -> None:
                 }
             )
 
+
+    prior_comparisons: list[dict[str, Any]] = []
+    for coverage in coverages:
+        multistart_rows = [
+            row
+            for row in all_rows
+            if row["method"] == "multistart_trace" and row["coverage"] == coverage
+        ]
+        multistart_summary = next(
+            row
+            for row in summaries
+            if row["method"] == "multistart_trace" and row["coverage"] == coverage
+        )
+        for baseline_method in ("iterative_trace", "graph_alignment"):
+            baseline_rows = [
+                row
+                for row in all_rows
+                if row["method"] == baseline_method and row["coverage"] == coverage
+            ]
+            baseline_summary = next(
+                row
+                for row in summaries
+                if row["method"] == baseline_method and row["coverage"] == coverage
+            )
+            paired = mcnemar_exact(multistart_rows, baseline_rows)
+            lower_edit = 0
+            equal_edit = 0
+            higher_edit = 0
+            baseline_by_cluster = {
+                int(row["cluster_index"]): int(row["edit_distance"])
+                for row in baseline_rows
+            }
+            for row in multistart_rows:
+                cluster_index = int(row["cluster_index"])
+                candidate_distance = int(row["edit_distance"])
+                baseline_distance = baseline_by_cluster[cluster_index]
+                if candidate_distance < baseline_distance:
+                    lower_edit += 1
+                elif candidate_distance == baseline_distance:
+                    equal_edit += 1
+                else:
+                    higher_edit += 1
+            prior_comparisons.append(
+                {
+                    "coverage": coverage,
+                    "method": "multistart_trace",
+                    "baseline": baseline_method,
+                    "exact_recovery_rate_difference": round(
+                        float(multistart_summary["exact_recovery_rate"])
+                        - float(baseline_summary["exact_recovery_rate"]),
+                        8,
+                    ),
+                    "mean_edit_distance_difference": round(
+                        float(multistart_summary["mean_edit_distance"])
+                        - float(baseline_summary["mean_edit_distance"]),
+                        8,
+                    ),
+                    "lower_edit_distance_pairs": lower_edit,
+                    "equal_edit_distance_pairs": equal_edit,
+                    "higher_edit_distance_pairs": higher_edit,
+                    **paired,
+                }
+            )
+
     empty_clusters = sum(not cluster for cluster in clusters)
     dataset_metadata = {
         "name": DATASET_NAME,
@@ -592,6 +886,22 @@ def run_benchmark(args: argparse.Namespace) -> None:
             "max_coverage": max_coverage,
             "eligible_cluster_count": sum(
                 len(cluster) >= max_coverage for cluster in clusters
+            ),
+        },
+        "calibration": {
+            "selection": (
+                "separate deterministic SHA-256 ranked clusters with all held-out "
+                "cluster IDs excluded before parameter selection"
+            ),
+            "seed": args.calibration_seed,
+            "subset_size": args.calibration_size,
+            "coverages": list(CALIBRATION_COVERAGES),
+            "held_out_overlap_count": 0,
+            "baseline": calibration_baseline,
+            "candidates": calibration_candidates,
+            "winner": calibration_winner,
+            "runtime_budget_rule": (
+                "candidate runtime <= max(4x iterative baseline, baseline + 2 seconds)"
             ),
         },
         "claim_scope": (
@@ -645,14 +955,25 @@ def run_benchmark(args: argparse.Namespace) -> None:
             "The benchmark preserves the official source and records repeated executions "
             "instead of modifying its tie behavior."
         ),
+        (
+            "The multistart configuration is selected on one disjoint CNR calibration "
+            "subset and may not generalize to other physical DNA-storage channels."
+        ),
     ]
 
     error_profile = _error_profile(selected, max_coverage)
     summary_payload = {
         "metadata": metadata,
+        "calibration": {
+            "baseline": calibration_baseline,
+            "candidates": calibration_candidates,
+            "winner": calibration_winner,
+            "held_out_overlap_count": 0,
+        },
         "raw_read_error_profile_on_selected_max_coverage_reads": error_profile,
         "summaries": summaries,
         "paired_exact_recovery_comparisons_vs_bbs": comparisons,
+        "paired_improvements_vs_prior_oligoark": prior_comparisons,
         "bbs_repeat_summaries": bbs_repeat_summaries,
         "not_applicable": not_applicable,
         "limitations": limitations,
@@ -666,7 +987,16 @@ def run_benchmark(args: argparse.Namespace) -> None:
     _write_csv(output_dir / "raw-results.csv", all_rows)
     _write_csv(output_dir / "summary.csv", summaries)
     _write_csv(output_dir / "paired-comparisons.csv", comparisons)
+    _write_csv(
+        output_dir / "paired-improvements-vs-prior.csv",
+        prior_comparisons,
+    )
     _write_csv(output_dir / "bbs-repeat-summaries.csv", bbs_repeat_summaries)
+    _write_csv(output_dir / "calibration-candidates.csv", calibration_candidates)
+    _write_csv(
+        output_dir / "calibration-summary.csv",
+        [calibration_baseline, calibration_winner],
+    )
     (output_dir / "metadata.json").write_text(
         json.dumps(metadata, indent=2), encoding="utf-8"
     )
@@ -682,6 +1012,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--subset-size", type=int, default=DEFAULT_SUBSET_SIZE)
     parser.add_argument("--coverages", type=int, nargs="+", default=list(DEFAULT_COVERAGES))
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument(
+        "--calibration-seed",
+        type=int,
+        default=DEFAULT_CALIBRATION_SEED,
+    )
+    parser.add_argument(
+        "--calibration-size",
+        type=int,
+        default=DEFAULT_CALIBRATION_SIZE,
+    )
     parser.add_argument("--bbs-repeats", type=int, default=5)
     parser.add_argument("--worker-method", choices=OLIGOARK_METHODS)
     parser.add_argument("--subset-json")
