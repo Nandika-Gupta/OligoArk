@@ -11,11 +11,6 @@ OligoArk converts digital data into DNA-like sequences, simulates errors such as
 
 ## v0.6 key result
 
-- **1,680** untouched held-out simulation trials.
-- Graph/alignment and iterative-trace reconstruction: **223/240 = 92.9%** overall recovery.
-- Moderate-indel recovery: **30/30** at both tested read-coverage levels.
-- Graph/trace reconstruction rescued **38/38** paired direct-method failures in the two moderate-indel regimes, with **0 regressions**.
-- Combined robust optimizer: **221/240 = 92.1%** overall recovery.
 - Physical CNR benchmark: confidence fusion reaches **73/96 (76.0%) at 5 reads** and **93/96 (96.9%) at 10 reads**; pinned BBS varies **72–74/96 at 5 reads** and is **93/96 at 10 reads** across five repeats.
 
 On the fixed 96-cluster physical CNR benchmark, confidence fusion matches BBS exact recovery at 10 reads and shows no statistically significant exact-recovery difference at 5 or 10 reads. This does **not** establish a general state-of-the-art claim; BBS remains substantially faster. End-to-end decoding of an external DNA archive has not been validated.
