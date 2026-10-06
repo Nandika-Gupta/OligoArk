@@ -1,0 +1,11 @@
+{
+  "dataset": "Microsoft Clustered Nanopore Reads (CNR)",
+  "doi": "10.48550/arXiv.2107.06440",
+  "bioproject": "not applicable (data hosted on GitHub)",
+  "run_accessions": [
+    "microsoft/clustered-nanopore-reads-dataset@6938f44796185902a08381943c2895782886c5c3"
+  ],
+  "data_restrictions": "MIT License, per the dataset repository.",
+  "reference_mapping_status": "Centers.txt holds the 10,000 reference strands and Clusters.txt holds the reads in the same cluster order. benchmarks/convert_cnr_to_physical.py writes a subset as reference and read FASTA files; the evaluator then assigns each read to its nearest reference by edit distance, not by cluster index.",
+  "notes": "Provenance only; the data is not bundled. CNR strands were not encoded with OligoArk, so results are reference-reconstruction accuracy, not an end-to-end decoding claim. See docs/external-cnr-benchmark.md for the separate pinned BBS comparison."
+}

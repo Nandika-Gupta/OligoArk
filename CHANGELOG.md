@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- `datasets/cnr.json` manifest and `benchmarks/convert_cnr_to_physical.py` to run a Clustered Nanopore Reads subset through the physical-read adapter, with a small committed test fixture.
 - Lightweight deterministic `multistart_trace_consensus()` using multiple observed-read anchors, bidirectional refinement, candidate pruning and optional known-length scoring without GPU/deep-learning dependencies.
 - Leakage-controlled CNR calibration: 48 deterministic calibration clusters are excluded from the unchanged 96-cluster held-out physical-read benchmark before configuration selection.
 - Paired held-out comparisons against prior OligoArk graph/alignment and iterative-trace methods in addition to the pinned external BBS baseline.
