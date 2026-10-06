@@ -22,6 +22,7 @@ from oligoark.reconstruct import (
     iterative_trace_consensus,
     medoid_consensus,
     multistart_trace_consensus,
+    targeted_trace_consensus,
 )
 
 DATASET_NAME = "Microsoft Clustered Nanopore Reads (CNR)"
@@ -38,6 +39,28 @@ DEFAULT_SEED = 20261005
 DEFAULT_CALIBRATION_SEED = 20261006
 DEFAULT_CALIBRATION_SIZE = 48
 CALIBRATION_COVERAGES = (5, 10)
+FROZEN_TARGETED_CONFIG: dict[str, object] = {
+    "name": "targeted-hp10-w2",
+    "anchors": 3,
+    "rounds": 1,
+    "bidirectional": True,
+    "length_penalty": 1.0,
+    "homopolymer_weight": 0.75,
+    "min_homopolymer_run": 2,
+    "substitution_min_gain": 0.0,
+    "substitution_homopolymer_weight": 2.0,
+    "substitution_homopolymer_min_reads": 10,
+}
+TARGETED_CALIBRATION_PROVENANCE = {
+    "workflow_run": 37411358445,
+    "artifact_id": 11389122776,
+    "held_out_overlap_count": 0,
+    "five_read_successes": 34,
+    "five_read_trials": 48,
+    "ten_read_successes": 47,
+    "ten_read_trials": 48,
+    "ten_read_mean_edit_distance": 0.08333333,
+}
 MULTISTART_CANDIDATES: tuple[dict[str, object], ...] = (
     {
         "name": "a1-r2-bi",
@@ -81,6 +104,7 @@ OLIGOARK_METHODS = (
     "graph_alignment",
     "iterative_trace",
     "multistart_trace",
+    "targeted_trace",
 )
 
 
@@ -243,7 +267,70 @@ def _reconstruct(
             bidirectional=bool(consensus_config["bidirectional"]),
             length_penalty=float(consensus_config["length_penalty"]),
         )
+    if method == "targeted_trace":
+        config = FROZEN_TARGETED_CONFIG
+        return targeted_trace_consensus(
+            reads,
+            target_length=TARGET_LENGTH,
+            anchors=int(config["anchors"]),
+            rounds=int(config["rounds"]),
+            bidirectional=bool(config["bidirectional"]),
+            length_penalty=float(config["length_penalty"]),
+            homopolymer_weight=float(config["homopolymer_weight"]),
+            min_homopolymer_run=int(config["min_homopolymer_run"]),
+            substitution_min_gain=float(config["substitution_min_gain"]),
+            substitution_homopolymer_weight=float(
+                config["substitution_homopolymer_weight"]
+            ),
+            substitution_homopolymer_min_reads=int(
+                config["substitution_homopolymer_min_reads"]
+            ),
+        )
     raise ValueError(f"unknown worker method: {method}")
+
+
+def _classify_reference_error(reference: str, reconstruction: str) -> dict[str, Any]:
+    if reconstruction == reference:
+        return {
+            "error_class": "exact",
+            "substitutions": 0,
+            "insertions": 0,
+            "deletions": 0,
+        }
+    aligned_reference, aligned_reconstruction = global_align(reference, reconstruction)
+    substitutions = 0
+    insertions = 0
+    deletions = 0
+    for reference_base, reconstructed_base in zip(
+        aligned_reference,
+        aligned_reconstruction,
+        strict=True,
+    ):
+        if reference_base == "-":
+            insertions += 1
+        elif reconstructed_base == "-":
+            deletions += 1
+        elif reference_base != reconstructed_base:
+            substitutions += 1
+    distance = edit_distance(reference, reconstruction)
+    if distance == 1 and substitutions == 1 and not insertions and not deletions:
+        error_class = "one_edit_substitution"
+    elif distance == 1 and insertions == 1 and not substitutions and not deletions:
+        error_class = "one_edit_insertion"
+    elif distance == 1 and deletions == 1 and not substitutions and not insertions:
+        error_class = "one_edit_deletion"
+    elif insertions and deletions and len(reference) == len(reconstruction):
+        error_class = "alignment_shift"
+    elif len(reference) != len(reconstruction):
+        error_class = "length_error"
+    else:
+        error_class = "multi_edit"
+    return {
+        "error_class": error_class,
+        "substitutions": substitutions,
+        "insertions": insertions,
+        "deletions": deletions,
+    }
 
 
 def _case_record(
@@ -265,6 +352,7 @@ def _case_record(
         "reference": reference,
         "reconstruction": reconstruction,
         "reconstructed_length": len(reconstruction),
+        **_classify_reference_error(reference, reconstruction),
     }
 
 
@@ -441,6 +529,7 @@ def _parse_bbs_output(
                 "bbs_k": int(output_row["k"]),
                 "bbs_path_weight": float(output_row["path_weight"]),
                 "bbs_confidence": float(output_row["confidence"]),
+                **_classify_reference_error(reference, reconstruction),
             }
         )
     return rows
@@ -510,6 +599,10 @@ def summarize_rows(
         "mean_edit_distance": round(statistics.fmean(edit_distances), 8),
         "median_edit_distance": round(float(statistics.median(edit_distances)), 8),
         "mean_normalized_edit_distance": round(statistics.fmean(normalized), 8),
+        "one_edit_failures": sum(distance == 1 for distance in edit_distances),
+        "two_edit_failures": sum(distance == 2 for distance in edit_distances),
+        "three_plus_edit_failures": sum(distance >= 3 for distance in edit_distances),
+        "max_edit_distance": max(edit_distances, default=0),
         "elapsed_seconds": round(elapsed_seconds, 6),
         "seconds_per_cluster": round(elapsed_seconds / trials, 8),
         "peak_rss_mb": peak_rss_mb,
@@ -779,17 +872,21 @@ def run_benchmark(args: argparse.Namespace) -> None:
 
     prior_comparisons: list[dict[str, Any]] = []
     for coverage in coverages:
-        multistart_rows = [
+        targeted_rows = [
             row
             for row in all_rows
-            if row["method"] == "multistart_trace" and row["coverage"] == coverage
+            if row["method"] == "targeted_trace" and row["coverage"] == coverage
         ]
-        multistart_summary = next(
+        targeted_summary = next(
             row
             for row in summaries
-            if row["method"] == "multistart_trace" and row["coverage"] == coverage
+            if row["method"] == "targeted_trace" and row["coverage"] == coverage
         )
-        for baseline_method in ("iterative_trace", "graph_alignment"):
+        for baseline_method in (
+            "multistart_trace",
+            "iterative_trace",
+            "graph_alignment",
+        ):
             baseline_rows = [
                 row
                 for row in all_rows
@@ -800,15 +897,15 @@ def run_benchmark(args: argparse.Namespace) -> None:
                 for row in summaries
                 if row["method"] == baseline_method and row["coverage"] == coverage
             )
-            paired = mcnemar_exact(multistart_rows, baseline_rows)
-            lower_edit = 0
-            equal_edit = 0
-            higher_edit = 0
+            paired = mcnemar_exact(targeted_rows, baseline_rows)
             baseline_by_cluster = {
                 int(row["cluster_index"]): int(row["edit_distance"])
                 for row in baseline_rows
             }
-            for row in multistart_rows:
+            lower_edit = 0
+            equal_edit = 0
+            higher_edit = 0
+            for row in targeted_rows:
                 cluster_index = int(row["cluster_index"])
                 candidate_distance = int(row["edit_distance"])
                 baseline_distance = baseline_by_cluster[cluster_index]
@@ -821,15 +918,15 @@ def run_benchmark(args: argparse.Namespace) -> None:
             prior_comparisons.append(
                 {
                     "coverage": coverage,
-                    "method": "multistart_trace",
+                    "method": "targeted_trace",
                     "baseline": baseline_method,
                     "exact_recovery_rate_difference": round(
-                        float(multistart_summary["exact_recovery_rate"])
+                        float(targeted_summary["exact_recovery_rate"])
                         - float(baseline_summary["exact_recovery_rate"]),
                         8,
                     ),
                     "mean_edit_distance_difference": round(
-                        float(multistart_summary["mean_edit_distance"])
+                        float(targeted_summary["mean_edit_distance"])
                         - float(baseline_summary["mean_edit_distance"]),
                         8,
                     ),
@@ -903,6 +1000,16 @@ def run_benchmark(args: argparse.Namespace) -> None:
             "runtime_budget_rule": (
                 "candidate runtime <= max(4x iterative baseline, baseline + 2 seconds)"
             ),
+        },
+        "targeted_repair_calibration": {
+            "frozen_config": FROZEN_TARGETED_CONFIG,
+            "provenance": TARGETED_CALIBRATION_PROVENANCE,
+            "selection_rule": (
+                "selected only on the disjoint 48-cluster calibration split; "
+                "10-read exact recovery had to exceed 39/48, reach at least 43/48, "
+                "and 5-read exact recovery could not fall below 29/48"
+            ),
+            "held_out_used_for_parameter_selection": False,
         },
         "claim_scope": (
             "physical-read trace reconstruction against explicit reference oligos; "
