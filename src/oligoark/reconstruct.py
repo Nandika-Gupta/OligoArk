@@ -757,6 +757,280 @@ def targeted_trace_consensus(
     return selected
 
 
+def _candidate_qgram_similarity(
+    candidate: str,
+    cluster: list[str],
+    *,
+    width: int,
+) -> float:
+    signature = _qgrams(candidate, width)
+    if not cluster:
+        return 0.0
+    return sum(_jaccard(signature, _qgrams(read, width)) for read in cluster) / len(cluster)
+
+
+def _bounded_local_candidates(
+    candidate: str,
+    cluster: list[str],
+    *,
+    target_length: int,
+    top_positions: int,
+    max_candidates: int,
+) -> list[str]:
+    """Generate a tiny deterministic edit neighborhood from low-confidence evidence."""
+    if top_positions < 1 or max_candidates < 1:
+        return []
+
+    base_votes, insertion_votes = _alignment_vote_evidence(candidate, cluster)
+    generated: list[str] = []
+    seen: set[str] = {candidate}
+
+    def add(value: str) -> None:
+        if value not in seen and len(generated) < max_candidates:
+            seen.add(value)
+            generated.append(value)
+
+    def ranked_insertions(
+        sequence: str,
+        votes_by_slot: list[Counter[str]],
+    ) -> list[tuple[int, int, int, str]]:
+        ranked: list[tuple[int, int, int, str]] = []
+        operations = _targeted_insertion_operations(
+            sequence,
+            votes_by_slot,
+            min_homopolymer_run=2,
+        )
+        for slot, base in operations:
+            observed_support = max(
+                (
+                    count
+                    for inserted, count in votes_by_slot[slot].items()
+                    if inserted and base in inserted
+                ),
+                default=0,
+            )
+            run_length = _homopolymer_run_after_insertion(sequence, slot, base)
+            ranked.append((-observed_support, -run_length, slot, base))
+        return sorted(set(ranked))
+
+    if len(candidate) == target_length - 1:
+        for _, _, slot, base in ranked_insertions(candidate, insertion_votes):
+            add(candidate[:slot] + base + candidate[slot:])
+        return generated
+
+    if len(candidate) == target_length - 2:
+        beam_width = max(2, min(4, top_positions + 1))
+        first_steps = ranked_insertions(candidate, insertion_votes)[:beam_width]
+        for _, _, slot, base in first_steps:
+            first = candidate[:slot] + base + candidate[slot:]
+            _, second_insertion_votes = _alignment_vote_evidence(first, cluster)
+            second_steps = ranked_insertions(first, second_insertion_votes)[:beam_width]
+            for _, _, second_slot, second_base in second_steps:
+                add(first[:second_slot] + second_base + first[second_slot:])
+        return generated
+
+    if len(candidate) == target_length + 1:
+        length_deletions: list[tuple[int, int, int]] = []
+        for position, votes in enumerate(base_votes):
+            selected_count = votes[candidate[position]]
+            gap_count = votes["-"]
+            length_deletions.append(
+                (selected_count - gap_count, selected_count, position)
+            )
+        for _, _, position in sorted(length_deletions)[:top_positions]:
+            add(candidate[:position] + candidate[position + 1 :])
+        return generated
+
+    if len(candidate) != target_length:
+        return generated
+
+    uncertainty: list[tuple[int, int, int, int]] = []
+    for position, votes in enumerate(base_votes):
+        selected_count = votes[candidate[position]]
+        alternative_count = max(
+            (count for base, count in votes.items() if base != candidate[position]),
+            default=0,
+        )
+        uncertainty.append(
+            (
+                selected_count - alternative_count,
+                -alternative_count,
+                selected_count,
+                position,
+            )
+        )
+
+    suspicious_positions = [entry[3] for entry in sorted(uncertainty)[:top_positions]]
+    for position in suspicious_positions:
+        votes = base_votes[position]
+        alternatives = sorted(
+            (
+                (-count, base)
+                for base, count in votes.items()
+                if base in "ACGT" and base != candidate[position]
+            )
+        )
+        if not alternatives:
+            alternatives = [(0, base) for base in "ACGT" if base != candidate[position]]
+        for _, base in alternatives[:1]:
+            add(candidate[:position] + base + candidate[position + 1 :])
+
+    # Tiny same-length indel-pair beam. High gap support nominates a deletion;
+    # insertion evidence/homopolymer context nominates the compensating insertion.
+    ranked_deletions: list[tuple[int, int, int, int]] = []
+    for position, votes in enumerate(base_votes):
+        selected_count = votes[candidate[position]]
+        gap_count = votes["-"]
+        ranked_deletions.append(
+            (
+                selected_count - gap_count,
+                -gap_count,
+                selected_count,
+                position,
+            )
+        )
+    deletion_positions = [
+        entry[3] for entry in sorted(ranked_deletions)[:top_positions]
+    ]
+    insertion_operations = ranked_insertions(candidate, insertion_votes)[:top_positions]
+    for delete_position in deletion_positions:
+        without = candidate[:delete_position] + candidate[delete_position + 1 :]
+        for _, _, slot, base in insertion_operations:
+            adjusted_slot = slot - 1 if slot > delete_position else slot
+            adjusted_slot = max(0, min(len(without), adjusted_slot))
+            add(without[:adjusted_slot] + base + without[adjusted_slot:])
+
+    # Very local shift repair remains as a final cheap fallback.
+    for position in suspicious_positions:
+        without = candidate[:position] + candidate[position + 1 :]
+        for slot in (max(0, position - 1), min(len(without), position + 1)):
+            suggested: set[str] = {candidate[position]}
+            source_slot = min(slot, len(insertion_votes) - 1)
+            suggested.update(
+                base
+                for sequence in insertion_votes[source_slot]
+                if sequence
+                for base in sequence
+                if base in "ACGT"
+            )
+            if slot > 0:
+                suggested.add(without[slot - 1])
+            if slot < len(without):
+                suggested.add(without[slot])
+            for base in sorted(suggested):
+                add(without[:slot] + base + without[slot:])
+
+    return generated
+
+
+def confidence_fusion_trace_consensus(
+    cluster: list[str],
+    *,
+    target_length: int,
+    anchors: int = 3,
+    rounds: int = 1,
+    top_positions: int = 3,
+    max_candidates: int = 24,
+    trim_farthest: int = 1,
+    qgram_width: int = 4,
+    qgram_weight: float = 0.5,
+    minimum_score_gain: float = 0.0,
+) -> str:
+    """Fuse low-cost consensuses and apply a bounded confidence-guided edit search.
+
+    The method never uses the unknown reference. It starts from the frozen targeted
+    repair, adds only a tiny edit neighborhood around low-confidence positions, and
+    selects a replacement only when observed-read evidence improves by a configured margin.
+    """
+    if not cluster:
+        raise ValueError("cluster must not be empty")
+    if target_length < 1:
+        raise ValueError("target_length must be positive")
+    if anchors < 1 or rounds < 1:
+        raise ValueError("anchors and rounds must be positive")
+    if top_positions < 1 or max_candidates < 1:
+        raise ValueError("top_positions and max_candidates must be positive")
+    if trim_farthest < 0 or trim_farthest >= len(cluster):
+        raise ValueError("trim_farthest must be between 0 and len(cluster)-1")
+    if qgram_width < 1:
+        raise ValueError("qgram_width must be positive")
+    if qgram_weight < 0 or minimum_score_gain < 0:
+        raise ValueError("weights and minimum_score_gain must be non-negative")
+    if len(cluster) == 1:
+        return cluster[0]
+
+    baseline = targeted_trace_consensus(
+        cluster,
+        target_length=target_length,
+        anchors=anchors,
+        rounds=rounds,
+        bidirectional=True,
+        length_penalty=1.0,
+        homopolymer_weight=0.75,
+        min_homopolymer_run=2,
+        substitution_min_gain=0.0,
+        substitution_homopolymer_weight=2.0,
+        substitution_homopolymer_min_reads=10,
+    )
+
+    # The frozen targeted consensus already includes multi-start and bidirectional
+    # refinement. Keep this second-stage search deliberately tiny so the external
+    # benchmark remains CPU-friendly.
+    candidates: list[str] = [baseline]
+    seen: set[str] = {baseline}
+    for local in _bounded_local_candidates(
+        baseline,
+        cluster,
+        target_length=target_length,
+        top_positions=top_positions,
+        max_candidates=max_candidates - 1,
+    ):
+        if local not in seen:
+            seen.add(local)
+            candidates.append(local)
+        if len(candidates) >= max_candidates:
+            break
+
+    distance_cache: dict[str, tuple[int, int]] = {}
+
+    def distance_scores(candidate: str) -> tuple[int, int]:
+        cached = distance_cache.get(candidate)
+        if cached is not None:
+            return cached
+        distances = sorted(edit_distance(candidate, read) for read in cluster)
+        robust = (
+            sum(distances[: len(distances) - trim_farthest])
+            if trim_farthest
+            else sum(distances)
+        )
+        total = sum(distances)
+        distance_cache[candidate] = (robust, total)
+        return robust, total
+
+    def score(candidate: str) -> tuple[float, int, int, str]:
+        robust, total = distance_scores(candidate)
+        length_delta = abs(len(candidate) - target_length)
+        qgram_similarity = _candidate_qgram_similarity(
+            candidate,
+            cluster,
+            width=qgram_width,
+        )
+        composite = (
+            robust
+            + 0.05 * total
+            + 2.0 * length_delta
+            - qgram_weight * qgram_similarity
+        )
+        return (composite, length_delta, total, candidate)
+
+    baseline_score = score(baseline)[0]
+    best = min(candidates, key=score)
+    best_score = score(best)[0]
+    if baseline_score - best_score >= minimum_score_gain:
+        return best
+    return baseline
+
+
 @dataclass(frozen=True)
 class GraphConsensusReconstructor:
     """Explicit similarity graph + connected components + deterministic consensus."""
