@@ -3,9 +3,36 @@
 [![CI](https://github.com/sauravsingla/OligoArk/actions/workflows/ci.yml/badge.svg)](https://github.com/sauravsingla/OligoArk/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/oligoark.svg)](https://pypi.org/project/oligoark/)
 
-**A research framework for adaptive DNA-data storage, multi-read reconstruction, and reproducible physical-read benchmarking.**
+### Encode files into DNA-like strands, simulate storage errors, reconstruct them, and verify exact recovery.
 
-OligoArk explores how digital data can be encoded into DNA-like sequences, protected with adaptive redundancy, reconstructed from noisy multi-read clusters, and verified end to end with integrity checks. Its current research focus is **low-compute confidence-fusion reconstruction**: several deterministic reconstruction signals are combined with bounded confidence-guided repair to improve exact strand recovery without neural models, GPUs, or unrestricted search.
+**OligoArk** is an open-source research framework for DNA archival storage. It combines encoding, redundancy, noisy-channel simulation, multi-read reconstruction and SHA-256 verification in one reproducible pipeline.
+
+## Try it in 30 seconds
+
+```bash
+pip install oligoark
+printf 'OligoArk demo data\n' > demo.txt
+oligoark archive demo.txt --output demo.oligoark.json
+oligoark recover demo.oligoark.json --output recovered.txt
+cmp demo.txt recovered.txt
+```
+
+A successful `cmp` confirms byte-for-byte recovery.
+
+## Why it exists
+
+DNA storage research often evaluates encoding, channel errors, reconstruction and integrity separately. OligoArk makes those stages runnable together so researchers can ask practical questions such as:
+
+- How much redundancy is needed under a given dropout/error profile?
+- Which reconstruction strategy works best with only a few noisy reads?
+- Does a recovered archive exactly match the original bytes?
+- Do reconstruction settings generalize across independent physical-read datasets?
+
+Its current research focus is **low-compute confidence-fusion reconstruction**: deterministic reconstruction signals are combined with bounded confidence-guided repair, without requiring neural models, GPUs or unrestricted search.
+
+> **Scope:** OligoArk is software research, not a wet-lab DNA-storage platform. Physical-read benchmarks use published sequencing data and do not by themselves establish end-to-end wet-lab archival performance or a general state-of-the-art claim.
+
+**Best way to help:** try a new public DNA-storage dataset, reproduce a benchmark, contribute a channel/reconstruction method, or report a failure case.
 
 ## What is distinctive
 
