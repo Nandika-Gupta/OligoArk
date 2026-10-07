@@ -19,6 +19,23 @@ cmp demo.txt recovered.txt
 
 A successful `cmp` confirms byte-for-byte recovery.
 
+## Large files and scale validation
+
+For large files, use the compact bounded-memory streaming container:
+
+```bash
+oligoark archive-stream large.bin --output large.oligoark.bin --profile scale-1024
+oligoark recover-stream large.oligoark.bin --output large.recovered.bin
+cmp large.bin large.recovered.bin
+```
+
+The 100 MiB software acceptance milestone has been achieved for clean, 1% controlled-dropout,
+and 5% controlled-dropout recovery with exact SHA-256 verification. The validated clean path
+uses bounded-memory streaming; detailed density, throughput, peak-RSS, redundancy, negative
+noise results, and claim boundaries are recorded in
+[the acceptance evidence](docs/storage-scale-acceptance-2026-10-07.md). This is software
+archive evidence, not a wet-lab end-to-end storage claim.
+
 ## Why it exists
 
 DNA storage research often evaluates encoding, channel errors, reconstruction and integrity separately. OligoArk makes those stages runnable together so researchers can ask practical questions such as:
@@ -74,6 +91,8 @@ See the detailed benchmark reports for [CNR](docs/external-cnr-benchmark.md), [G
 - SHA-256-verified recovery and reproducible benchmark artifacts
 - Policy-learning experiments with retained negative results
 - Physical-read adapters and external baseline comparison
+- Bounded-memory compact binary archives for large-file scale validation
+- 152/200/248-nt physical strand profiles and clean-room DNA Fountain comparison
 
 ## Research philosophy
 
@@ -87,6 +106,9 @@ For the detailed novelty, validation design, ablations, prior-work positioning, 
 - [Benchmarking](docs/benchmarking.md)
 - [Architecture](docs/architecture.md)
 - [Configuration](docs/configuration.md)
+- [Scalable archival storage](docs/scalable-storage.md)
+- [DNA Fountain comparison](docs/dna-fountain-baseline.md)
+- [100 MiB acceptance evidence](docs/storage-scale-acceptance-2026-10-07.md)
 
 ## License
 
