@@ -75,23 +75,6 @@ See the detailed benchmark reports for [CNR](docs/external-cnr-benchmark.md), [G
 - Policy-learning experiments with retained negative results
 - Physical-read adapters and external baseline comparison
 
-## Install
-
-```bash
-pip install oligoark
-```
-
-## Quick start
-
-```bash
-printf 'OligoArk demo data\n' > demo.txt
-oligoark archive demo.txt --output demo.oligoark.json
-oligoark recover demo.oligoark.json --output recovered.txt
-cmp demo.txt recovered.txt
-```
-
-A successful `cmp` confirms byte-for-byte recovery of the archived input.
-
 ## Research philosophy
 
 OligoArk separates **simulation evidence**, **physical-read reconstruction evidence**, and **external published evidence**. It avoids treating software channel simulations as wet-lab validation, does not use hidden references during reconstruction candidate selection, and preserves negative experiments when a proposed method fails to improve untouched held-out results.
