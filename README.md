@@ -1,21 +1,23 @@
 # OligoArk 🧬
 
-**Scalable DNA archival-storage and reconstruction research.**
+**Bounded-memory DNA archival-storage system and reconstruction research.**
 
 ## Problem statement
 
 DNA archival storage needs to scale to large heterogeneous files, recover the original bytes
-exactly under strand loss/noise, and do so with measurable density, redundancy, throughput and
-memory under realistic strand constraints. OligoArk uses bounded-memory streaming archives,
-configurable 150–250 nt physical-design profiles, redundancy/error simulation, reconstruction,
-and **SHA-256 exact recovery as the final success criterion**.
+exactly under strand loss/noise, and report density, redundancy, throughput and memory under
+realistic DNA-oriented constraints. OligoArk combines bounded-memory streaming archives,
+configurable 150–250 nt **strand-length software profiles**, redundancy/error simulation,
+reconstruction, and **SHA-256 exact recovery as the final success criterion**.
+
+> **Validated milestone:** exact SHA-256 recovery of a **1 GiB heterogeneous archive** under
+> clean, **1%** and **5% controlled strand dropout**, with about **44 MiB peak RSS**.
 
 ## Storage benchmark
 
 ### 1 GiB bounded-memory archive
 
-Validated on a deterministic 1 GiB heterogeneous payload using the `scale-1024` systems
-profile with XOR redundancy.
+Deterministic 1 GiB heterogeneous payload, `scale-1024` systems profile, XOR redundancy.
 
 | Condition | SHA-256 | Lost / recovered | Density | Encode | Decode | Peak RSS | Redundancy | Archive overhead |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -23,9 +25,8 @@ profile with XOR redundancy.
 | 1% controlled dropout | ✅ PASS | **45,338 / 45,338** | **1.645833** | 9.77 MiB/s | 17.91 MiB/s | 44.08 MiB | 12.5% | 1.234× |
 | 5% controlled dropout | ✅ PASS | **226,705 / 226,705** | **1.645833** | 9.95 MiB/s | 12.12 MiB/s | 43.63 MiB | 12.5% | 1.234× |
 
-**1 GiB archive:** 4,530,557 data strands + 566,320 parity strands = **5,096,877 strands**,
-**5,219,201,308 encoded nt**, source SHA-256
-`cc6286341b8650694bdb4f565a75372a981fde3935d1577eb415031d9fb12b5e`.
+**Archive scale:** 4,530,557 data strands + 566,320 parity strands =
+**5,096,877 total strands** and **5,219,201,308 encoded nt**.
 
 **Scaling:** 1 KiB → 64 KiB → 1 MiB → 10 MiB → 100 MiB → **1 GiB** all passed exact
 SHA-256 recovery. Peak-memory log-log slope = **0.0434 (bounded)**; runtime slope =
@@ -42,8 +43,11 @@ SHA-256 recovery. Peak-memory log-log slope = **0.0434 (bounded)**; runtime slop
 | Fountain | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ |
 | Hybrid | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
 
-The current remaining robustness bottleneck is **insertion/deletion synchronization**; the
-tested RS-enabled profiles recover substitutions but not the tested indel or mixed regimes.
+Fault rates: substitution = **0.0005/base**; indel = **0.0001 insertion + 0.0001 deletion/base**;
+mixed = **1% dropout + 0.0002 substitution + 0.00005 insertion + 0.00005 deletion/base**.
+
+**Current bottleneck:** insertion/deletion synchronization. The tested RS-enabled profiles
+recover substitutions but not the tested indel or mixed regimes.
 
 ### Matched 152-nt codec comparison
 
@@ -65,11 +69,21 @@ and the same SHA-256 exact-recovery gate.
 | Grass et al. (Illumina) | 5 | **94/96 (97.9%)** | 90/96 (93.8%) |
 | Grass et al. (Illumina) | 10 | **96/96 (100%)** | 95/96 (99.0%) |
 | LCRC HFS-11.7K | 5 | **96/96 (100%)** | **96/96 (100%)** |
+| LCRC HFS-11.7K | 10 | **96/96 (100%)** | **96/96 (100%)** |
 | DNAformer Pilot | 5 | **96/96 (100%)** | **96/96 (100%)** |
+| DNAformer Pilot | 10 | **96/96 (100%)** | **96/96 (100%)** |
+
+## Reproduce
+
+```bash
+python benchmarks/run_storage_scale.py --profile acceptance
+python benchmarks/run_storage_scale.py --profile physical
+python benchmarks/run_matched_codec_scale.py --profile full --trials 5
+```
 
 > **Claim boundary:** The 1 GiB result is software archive / controlled-channel evidence using
-> the `scale-1024` systems profile. The 248-nt RS matrix is realistic-strand software evidence.
-> CNR/Grass/LCRC/DNAformer are reference-strand reconstruction benchmarks. None of these is an
-> end-to-end wet-lab OligoArk archive claim.
+> the `scale-1024` systems profile. The 248-nt RS matrix is realistic-strand **software**
+> evidence. CNR/Grass/LCRC/DNAformer are **reference-strand reconstruction** benchmarks.
+> None of these is an end-to-end wet-lab OligoArk archive claim.
 
 Details: [scalable storage](docs/scalable-storage.md) · [matched codec baselines](docs/dna-fountain-baseline.md)
