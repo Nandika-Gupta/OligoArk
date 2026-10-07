@@ -1,89 +1,75 @@
 # OligoArk 🧬
 
-**Bounded-memory DNA archival-storage system and reconstruction research.**
+**DNA archival storage for large files with exact recovery.**
 
 ## Problem statement
 
-DNA archival storage needs to scale to large heterogeneous files, recover the original bytes
-exactly under strand loss/noise, and report density, redundancy, throughput and memory under
-realistic DNA-oriented constraints. OligoArk combines bounded-memory streaming archives,
-configurable 150–250 nt **strand-length software profiles**, redundancy/error simulation,
-reconstruction, and **SHA-256 exact recovery as the final success criterion**.
+DNA can store data for a very long time, but a practical DNA-storage system must do more than
+encode small files. It should be able to:
 
-> **Validated milestone:** exact SHA-256 recovery of a **1 GiB heterogeneous archive** under
-> clean, **1%** and **5% controlled strand dropout**, with about **44 MiB peak RSS**.
+- store large and mixed types of data without using huge amounts of RAM;
+- recover the original file exactly even when some DNA strands are lost;
+- work with realistic DNA strand lengths;
+- measure storage density, speed, memory use and redundancy clearly.
 
-## Storage benchmark
+OligoArk is built to test these goals. A run is considered successful only when the recovered
+file matches the original file exactly using **SHA-256**.
 
-### 1 GiB bounded-memory archive
+## Benchmark results
 
-Deterministic 1 GiB heterogeneous payload, `scale-1024` systems profile, XOR redundancy.
+### 1 GiB storage test
 
-| Condition | SHA-256 | Lost / recovered | Density | Encode | Decode | Peak RSS | Redundancy | Archive overhead |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Clean | ✅ PASS | 0 / 0 | **1.645833 bits/nt** | 9.78 MiB/s | 23.08 MiB/s | 43.85 MiB | 12.5% | 1.234× |
-| 1% controlled dropout | ✅ PASS | **45,338 / 45,338** | **1.645833** | 9.77 MiB/s | 17.91 MiB/s | 44.08 MiB | 12.5% | 1.234× |
-| 5% controlled dropout | ✅ PASS | **226,705 / 226,705** | **1.645833** | 9.95 MiB/s | 12.12 MiB/s | 43.63 MiB | 12.5% | 1.234× |
+OligoArk successfully stored and recovered a **1 GiB heterogeneous dataset** containing mixed
+data types.
 
-**Archive scale:** 4,530,557 data strands + 566,320 parity strands =
-**5,096,877 total strands** and **5,219,201,308 encoded nt**.
+| Test | Result | Lost strands recovered | Density | Encode speed | Decode speed | Peak memory |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Clean | ✅ PASS | 0 | **1.646 bits/nt** | 9.78 MiB/s | 23.08 MiB/s | 43.85 MiB |
+| 1% strand loss | ✅ PASS | **45,338 / 45,338** | **1.646 bits/nt** | 9.77 MiB/s | 17.91 MiB/s | 44.08 MiB |
+| 5% strand loss | ✅ PASS | **226,705 / 226,705** | **1.646 bits/nt** | 9.95 MiB/s | 12.12 MiB/s | 43.63 MiB |
 
-**Scaling:** 1 KiB → 64 KiB → 1 MiB → 10 MiB → 100 MiB → **1 GiB** all passed exact
-SHA-256 recovery. Peak-memory log-log slope = **0.0434 (bounded)**; runtime slope =
-**0.7935 (linear-or-better)**.
+**Redundancy:** 12.5%  
+**Archive overhead:** 1.234×  
+**Total strands:** 5,096,877
 
-### RS-enabled 248-nt fault matrix
+OligoArk also passed exact SHA-256 recovery at:
 
-64 KiB heterogeneous payload, `oligoark-248`, 8 RS symbols.
+**1 KiB → 64 KiB → 1 MiB → 10 MiB → 100 MiB → 1 GiB**
 
-| Scheme | Clean | 1% dropout | 5% dropout | Substitution | Indel | Mixed |
+Memory stayed nearly flat as the data size increased, showing that the storage path is
+**bounded-memory** rather than loading the whole archive into RAM.
+
+### Realistic 248-nt strand test
+
+The 248-nt profile uses Reed-Solomon protection to test more DNA-like error conditions.
+
+| Protection | Clean | 1% loss | 5% loss | Substitution errors | Insert/delete errors | Mixed errors |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | None | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ |
 | XOR | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
 | Fountain | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ |
 | Hybrid | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
 
-Fault rates: substitution = **0.0005/base**; indel = **0.0001 insertion + 0.0001 deletion/base**;
-mixed = **1% dropout + 0.0002 substitution + 0.00005 insertion + 0.00005 deletion/base**.
+The main remaining technical problem is **insertion/deletion errors**. Substitution errors are
+recovered in the tested RS-enabled profile, but indel and mixed-error recovery still need
+improvement.
 
-**Current bottleneck:** insertion/deletion synchronization. The tested RS-enabled profiles
-recover substitutions but not the tested indel or mixed regimes.
+### Comparison with other DNA-storage codecs
 
-### Matched 152-nt codec comparison
+Matched test: 1 MiB payload, 152-nt strands, 25% redundancy, five trials per condition.
 
-1 MiB payload, 25% nominal redundancy, identical fault rates/seeds, five trials per condition,
-and the same SHA-256 exact-recovery gate.
+| Method | Density | Clean | 1% loss | 5% loss | Substitution |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| **OligoArk Fountain** | 0.463 bits/nt | 5/5 | 0/5 | 0/5 | **5/5** |
+| **DNA Fountain** | **1.347 bits/nt** | 5/5 | **5/5** | **5/5** | 0/5 |
+| **Goldman-style + XOR** | 0.515 bits/nt | 5/5 | 0/5 | 0/5 | 0/5 |
 
-| Method | Density | Clean | 1% dropout | 5% dropout | Substitution | Indel | Mixed |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| **OligoArk Fountain** | 0.463 bits/nt | 5/5 | 0/5 | 0/5 | **5/5** | 0/5 | 0/5 |
-| **DNA Fountain clean-room** | **1.347 bits/nt** | 5/5 | **5/5** | **5/5** | 0/5 | 0/5 | 0/5 |
-| **Goldman-style rotating + XOR** | 0.515 bits/nt | 5/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 |
+DNA Fountain currently has better density and dropout recovery in this matched 152-nt test.
+OligoArk currently performs better in the tested substitution-error condition.
 
-### External physical-read reconstruction
+> **Important:** The 1 GiB result is a software storage benchmark with controlled strand loss.
+> The 248-nt tests are realistic-strand software experiments. External physical-read results
+> are reconstruction benchmarks. These results are **not** an end-to-end wet-lab DNA-storage
+> experiment.
 
-| Dataset | Reads/strand | **OligoArk** | Pinned BBS |
-| --- | ---: | ---: | ---: |
-| Microsoft CNR (Nanopore) | 5 | **73/96 (76.0%)** | 72–74/96 |
-| Microsoft CNR (Nanopore) | 10 | **93/96 (96.9%)** | **93/96 (96.9%)** |
-| Grass et al. (Illumina) | 5 | **94/96 (97.9%)** | 90/96 (93.8%) |
-| Grass et al. (Illumina) | 10 | **96/96 (100%)** | 95/96 (99.0%) |
-| LCRC HFS-11.7K | 5 | **96/96 (100%)** | **96/96 (100%)** |
-| LCRC HFS-11.7K | 10 | **96/96 (100%)** | **96/96 (100%)** |
-| DNAformer Pilot | 5 | **96/96 (100%)** | **96/96 (100%)** |
-| DNAformer Pilot | 10 | **96/96 (100%)** | **96/96 (100%)** |
-
-## Reproduce
-
-```bash
-python benchmarks/run_storage_scale.py --profile acceptance
-python benchmarks/run_storage_scale.py --profile physical
-python benchmarks/run_matched_codec_scale.py --profile full --trials 5
-```
-
-> **Claim boundary:** The 1 GiB result is software archive / controlled-channel evidence using
-> the `scale-1024` systems profile. The 248-nt RS matrix is realistic-strand **software**
-> evidence. CNR/Grass/LCRC/DNAformer are **reference-strand reconstruction** benchmarks.
-> None of these is an end-to-end wet-lab OligoArk archive claim.
-
-Details: [scalable storage](docs/scalable-storage.md) · [matched codec baselines](docs/dna-fountain-baseline.md)
+More details: [scalable storage](docs/scalable-storage.md) · [codec comparison](docs/dna-fountain-baseline.md)
