@@ -231,7 +231,7 @@ The two outputs answer different questions:
 - `cnr-supplied-results.json` (`"assignment": "supplied_clusters"`) keeps CNR's own association: the reads of cluster *i* are scored only against center *i*. This is the faithful reading of the dataset.
 - `cnr-nearest-reference-results.json` (`"assignment": "nearest_reference"`) exercises the generic physical-read adapter, which reassigns every read to its most similar reference by edit distance. It compares every read with every reference, so keep the subset small and raise `--max-reads` above 5,000 if needed.
 
-On the default 20-cluster subset (194 reads, under 20 seconds each), both paths recovered 17/20 references exactly with trace consensus and left no read unassigned. Neither output is the authoritative CNR result; that is the held-out BBS comparison in [external-cnr-benchmark.md](external-cnr-benchmark.md).
+On the default subset of the first 20 non-empty clusters (194 reads, under 20 seconds each), both paths recovered 17 of those 20 selected references exactly with trace consensus and left no read unassigned. Empty clusters are skipped by the converter, so this is recovery on the selected non-empty references, not a strand-level rate that counts dropout or empty clusters. Neither output is the authoritative CNR result; that is the held-out BBS comparison in [external-cnr-benchmark.md](external-cnr-benchmark.md).
 
 Upstream limitation: the CNR README notes (8/12/2024) that the 10,000 source sequences contain long-range dependencies instead of being uniformly random, due to an error in their generation. The clustering algorithm may therefore behave unexpectedly and some recovered clusters may be malformed, which makes trace reconstruction harder.
 
