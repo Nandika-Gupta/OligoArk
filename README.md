@@ -67,6 +67,26 @@ Matched test: 1 MiB payload, 152-nt strands, 25% redundancy, five trials per con
 DNA Fountain currently has better density and dropout recovery in this matched 152-nt test.
 OligoArk currently performs better in the tested substitution-error condition.
 
+### Other dataset benchmarks
+
+These tests use published physical-read datasets and measure **reference-strand reconstruction**.
+
+| Dataset | Reads per strand | OligoArk | Pinned BBS |
+| --- | ---: | ---: | ---: |
+| Microsoft CNR (Nanopore) | 5 | **73/96 (76.0%)** | 72–74/96 |
+| Microsoft CNR (Nanopore) | 10 | **93/96 (96.9%)** | **93/96 (96.9%)** |
+| Grass et al. (Illumina) | 5 | **94/96 (97.9%)** | 90/96 (93.8%) |
+| Grass et al. (Illumina) | 10 | **96/96 (100%)** | 95/96 (99.0%) |
+| LCRC HFS-11.7K | 5 | **96/96 (100%)** | **96/96 (100%)** |
+| LCRC HFS-11.7K | 10 | **96/96 (100%)** | **96/96 (100%)** |
+| DNAformer Pilot | 1 | **83/96 (86.5%)** | **83/96 (86.5%)** |
+| DNAformer Pilot | 5 | **96/96 (100%)** | **96/96 (100%)** |
+| DNAformer Pilot | 10 | **96/96 (100%)** | **96/96 (100%)** |
+
+On these external datasets, OligoArk matches or slightly improves reconstruction accuracy over
+the pinned BBS baseline in several settings, while LCRC and DNAformer reach full recovery at
+5–10 reads per strand.
+
 > **Important:** The 1 GiB result is a software storage benchmark with controlled strand loss.
 > The 248-nt tests are realistic-strand software experiments. External physical-read results
 > are reconstruction benchmarks. These results are **not** an end-to-end wet-lab DNA-storage
