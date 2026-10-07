@@ -36,6 +36,32 @@ noise results, and claim boundaries are recorded in
 [the acceptance evidence](docs/storage-scale-acceptance-2026-10-07.md). This is software
 archive evidence, not a wet-lab end-to-end storage claim.
 
+## OligoArk vs DNA Fountain
+
+| Metric | **OligoArk** | **DNA Fountain baseline** |
+| --- | ---: | ---: |
+| 100 MiB archival test | **PASS** | Not evaluated in the 100 MiB run |
+| SHA-256 exact recovery | **Yes** | Yes |
+| Clean recovery | **PASS** | **PASS** |
+| 5% strand dropout | **PASS at 100 MiB with XOR** | **3/3 at 152 nt in the smoke comparison** |
+| Density at 100 MiB scale | **1.645832 bits/nt** | Not measured at 100 MiB |
+| Density in matched 152-nt comparison | 0.457756 bits/nt | **1.347368 bits/nt** |
+| 100 MiB strand redundancy | **12.5001%** | Not measured at 100 MiB |
+| Memory scaling | **Bounded through 100 MiB** | Small comparison only |
+| Runtime scaling | **Linear-or-better through 100 MiB** | Small comparison only |
+| 152/200/248-nt physical profiles | **Supported** | 152-nt comparison |
+| Main current strength | **Scalable streaming archive + exact recovery + reconstruction framework** | **Higher density and stronger fountain-style dropout performance** |
+
+**Interpretation:** OligoArk currently has stronger demonstrated **system-scale archival evidence**:
+the bounded-memory streaming path exactly recovered a deterministic 100 MiB heterogeneous
+payload under clean, 1% and 5% controlled strand loss. DNA Fountain is currently stronger in
+the matched 152-nt codec smoke test, achieving higher density and 3/3 recovery at 5% dropout
+where OligoArk's current 25% fountain configuration recovered 0/3. These are different
+evidence scopes and should not be treated as a single head-to-head 100 MiB benchmark.
+
+See [DNA Fountain comparison](docs/dna-fountain-baseline.md) and
+[100 MiB acceptance evidence](docs/storage-scale-acceptance-2026-10-07.md) for details.
+
 ## Why it exists
 
 DNA storage research often evaluates encoding, channel errors, reconstruction and integrity separately. OligoArk makes those stages runnable together so researchers can ask practical questions such as:
