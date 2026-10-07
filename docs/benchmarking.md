@@ -202,29 +202,4 @@ python benchmarks/run_physical_dataset.py \
 
 The checked DNA-Aeon manifest records public SRA provenance only. The evaluator does not infer another project's archive format and does not turn reference-reconstruction accuracy into an OligoArk end-to-end decoding claim.
 
-### CNR through the physical-read adapter
-
-`datasets/cnr.json` records provenance for Microsoft's Clustered Nanopore Reads dataset (MIT license). The data is not bundled, so fetch the pinned commit and convert a subset into FASTA files first:
-
-```bash
-git clone https://github.com/microsoft/clustered-nanopore-reads-dataset.git cnr
-git -C cnr checkout 6938f44796185902a08381943c2895782886c5c3
-python benchmarks/convert_cnr_to_physical.py \
-  --centers cnr/Centers.txt \
-  --clusters cnr/Clusters.txt \
-  --limit 20 \
-  --max-reads-per-cluster 10 \
-  --reads-out cnr-reads.fasta \
-  --references-out cnr-references.fasta
-python benchmarks/run_physical_dataset.py \
-  --manifest datasets/cnr.json \
-  --reads cnr-reads.fasta \
-  --references cnr-references.fasta \
-  --output cnr-physical-results.json
-```
-
-The converter takes the first `--limit` non-empty clusters in file order and skips empty ones, so every written reference has reads. The evaluator assigns each read to its nearest reference by edit distance rather than by cluster index, and it compares every read against every reference, so keep the subset small. Raise `--max-reads` on the evaluator if the converter writes more than 5,000 reads. The default 20-cluster subset (194 reads) runs in about 20 seconds and recovered 17/20 references exactly with trace consensus.
-
-This is a reproducible smoke example, not the authoritative CNR result; see [external-cnr-benchmark.md](external-cnr-benchmark.md) for the held-out BBS comparison.
-
-A separate reproducible external benchmark uses Microsoft's physical Clustered Nanopore Reads dataset with explicit 110-base references and the pinned external Bidirectional Beam Search (BBS) implementation. A 48-cluster calibration split is disjoint from the unchanged 96-cluster held-out set. The frozen lightweight multi-start/bidirectional consensus improved held-out exact recovery to **53/96 at five reads** and **80/96 at ten reads**, versus 44/96 and 63/96 for the prior iterative trace method and 33/96 and 65/96 for graph/alignment. BBS remained stronger at **72–73/96** across five five-read repetitions and **93/96** in all five ten-read repetitions. The final CPU-only workflow completed in 6 min 58 sec. See [external-cnr-benchmark.md](external-cnr-benchmark.md) for calibration, paired tests, runtime/memory, limitations and claim boundaries.
+Four reproducible external physical-read benchmarks now use the same frozen confidence-fusion reconstruction settings. On Microsoft's 110-base Clustered Nanopore Reads (CNR) dataset, OligoArk reaches **73/96 at five reads** and **93/96 at ten reads**, versus BBS **72–74/96** and **93/96**. On the independent Grass et al. Illumina dataset, the unchanged settings—apart from the mechanical 117-base target length—reach **94/96 at five reads** and **96/96 at ten reads**, versus BBS **90/96** and **95/96**. On the independent 2026 LCRC HFS-Pool-11.7K Illumina PE150 experiment, the same settings with the published 200-base target length reach **96/96 at both five and ten reads**, exactly tying BBS. On the DNAformer Pilot Illumina dataset, the same frozen settings with the mechanical 140-base target length reach **96/96 at both five and ten reads**, again exactly tying BBS; at one read both methods reach **83/96**. The LCRC association layer maps reads to the public design library before reconstruction and is kept separate from candidate scoring, while the CNR, Grass, and DNAformer benchmarks use explicit published bins. All four physical workflows are CPU-only and complete within the 10-minute benchmark budget; BBS remains substantially faster. See [external-cnr-benchmark.md](external-cnr-benchmark.md), [external-grass-benchmark.md](external-grass-benchmark.md), [external-lcrc-benchmark.md](external-lcrc-benchmark.md), and [external-dnaformer-pilot-benchmark.md](external-dnaformer-pilot-benchmark.md) for provenance, split isolation, confidence intervals, paired tests, runtime/memory, association rules, and claim boundaries.

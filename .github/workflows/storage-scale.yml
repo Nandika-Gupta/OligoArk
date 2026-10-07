@@ -1,0 +1,73 @@
+name: Storage scale acceptance
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "Storage benchmark profile"
+        required: true
+        default: acceptance
+        type: choice
+        options:
+          - ci
+          - acceptance
+          - physical
+          - storage
+          - full
+  schedule:
+    - cron: "23 2 * * 0"
+
+permissions:
+  contents: read
+
+jobs:
+  storage-scale:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -U pip
+      - run: pip install -e ".[bench]"
+      - name: Resolve benchmark profile
+        id: profile
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED: ${{ github.event.inputs.profile }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            PROFILE=ci
+          elif [ "$EVENT_NAME" = "schedule" ]; then
+            PROFILE=storage
+          else
+            PROFILE="${REQUESTED:-acceptance}"
+          fi
+          echo "profile=$PROFILE" >> "$GITHUB_OUTPUT"
+          echo "Running storage profile: $PROFILE"
+      - name: Run storage benchmark
+        run: python benchmarks/run_storage_scale.py --profile "${{ steps.profile.outputs.profile }}"
+      - name: Enforce 1 GiB milestone
+        if: ${{ steps.profile.outputs.profile == 'acceptance' || steps.profile.outputs.profile == 'storage' || steps.profile.outputs.profile == 'full' }}
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          summary = json.loads(Path("storage-scale-results/summary.json").read_text())
+          if not summary["milestone_achieved"]:
+              raise SystemExit(summary["milestone_failure"])
+          print(summary["milestone_statement"])
+          PY
+      - name: Upload storage evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: storage-scale-${{ github.run_id }}
+          path: |
+            storage-scale-results/*.json
+            storage-scale-results/*.csv
+            storage-scale-results/*.png
+          if-no-files-found: error
