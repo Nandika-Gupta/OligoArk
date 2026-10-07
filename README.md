@@ -1,6 +1,22 @@
 # OligoArk 🧬
 
-**AI-native DNA archival storage and reconstruction research.**
+**Scalable DNA archival-storage and reconstruction research.**
+
+## Problem statement
+
+DNA archival storage is promising for long-term, high-density preservation, but practical
+software systems still need to answer three engineering questions:
+
+1. **Can large heterogeneous files be encoded and recovered without memory growing with the
+   whole archive?**
+2. **Can the original bytes be recovered exactly when DNA strands are lost or reads are
+   noisy?**
+3. **Can storage density, redundancy, throughput, memory and reconstruction quality be
+   measured reproducibly under realistic strand-length constraints and fair baselines?**
+
+OligoArk addresses these questions with bounded-memory streaming archives, configurable
+150–250 nt strand profiles, redundancy/error simulation, reconstruction, and **SHA-256 exact
+recovery as the final success criterion**.
 
 ## Benchmark results
 
