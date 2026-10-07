@@ -3,13 +3,23 @@
 [![CI](https://github.com/sauravsingla/OligoArk/actions/workflows/ci.yml/badge.svg)](https://github.com/sauravsingla/OligoArk/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/oligoark.svg)](https://pypi.org/project/oligoark/)
 
-**Research software for adaptive DNA-data encoding, error simulation, and reliable reconstruction.**
+**A research framework for adaptive DNA-data storage, multi-read reconstruction, and reproducible physical-read benchmarking.**
 
-OligoArk converts digital data into DNA-like sequences, simulates errors such as substitutions, insertions, deletions and missing reads, reconstructs the data with multiple strategies, and verifies exact recovery using SHA-256.
+OligoArk explores how digital data can be encoded into DNA-like sequences, protected with adaptive redundancy, reconstructed from noisy multi-read clusters, and verified end to end with integrity checks. Its current research focus is **low-compute confidence-fusion reconstruction**: several deterministic reconstruction signals are combined with bounded confidence-guided repair to improve exact strand recovery without neural models, GPUs, or unrestricted search.
 
-> OligoArk is a **software/simulation research framework**. It does not physically synthesize or store DNA and makes no wet-lab performance claim.
+## What is distinctive
 
-## v0.6 physical benchmark results
+OligoArk is not presented as a new biochemical storage medium or a replacement for established DNA-storage codecs. Its main research contribution is the **integration and validation** of several ideas in one reproducible system:
+
+- **Confidence-fusion reconstruction** combines multi-start, alignment, trace, observed-read distance, q-gram consistency, and local ambiguity evidence in a tightly bounded deterministic candidate search.
+- **Leakage-controlled evaluation** separates calibration, development, and untouched held-out subsets so reconstruction parameters are frozen before final evaluation.
+- **Cross-dataset generalization** tests the same frozen confidence-fusion settings on multiple independent physical DNA-storage datasets, changing only mechanically required strand length.
+- **Measured adaptive codec selection** evaluates candidate redundancy/reconstruction configurations through the real encode → corrupt → recover → SHA-256 verification path instead of relying only on proxy scores.
+- **Explicit negative results and claim boundaries** are retained so improvements, regressions, runtime trade-offs, and failed learning approaches remain visible.
+
+> OligoArk is **software research**, not a wet-lab DNA-storage platform. Physical benchmark results below measure reference-level reconstruction from published sequencing reads; they are not end-to-end external archive decodes and do not establish a general state-of-the-art claim.
+
+## Physical benchmark results
 
 | Physical dataset | Reads / strand | **OligoArk confidence fusion** | Pinned BBS |
 | --- | ---: | ---: | ---: |
@@ -22,9 +32,21 @@ OligoArk converts digital data into DNA-like sequences, simulates errors such as
 | DNAformer Pilot (Illumina MiSeq) | 5 | **96/96 (100%)** | **96/96 (100%)** |
 | DNAformer Pilot (Illumina MiSeq) | 10 | **96/96 (100%)** | **96/96 (100%)** |
 
-The **same frozen confidence-fusion settings** were used across all four physical benchmarks; only the known strand length changed mechanically (110 nt CNR, 117 nt Grass, 200 nt LCRC, 140 nt DNAformer Pilot). On the DNAformer Pilot held-out split, both OligoArk and BBS reconstructed all 96 strands exactly at 5 and 10 reads; at 1 read both reached 83/96. BBS remains substantially faster. These are reference-level physical-read reconstruction results, not end-to-end external archive decoding or a general state-of-the-art claim.
+The **same frozen confidence-fusion settings** were used across all four physical benchmarks; only known strand length changed mechanically: 110 nt for CNR, 117 nt for Grass, 200 nt for LCRC, and 140 nt for DNAformer Pilot. On the DNAformer Pilot held-out split, both OligoArk and BBS reconstructed all 96 strands exactly at 5 and 10 reads; at 1 read both reached 83/96. BBS remains substantially faster.
 
-See [CNR benchmark](docs/external-cnr-benchmark.md), [Grass benchmark](docs/external-grass-benchmark.md), [LCRC benchmark](docs/external-lcrc-benchmark.md), and [DNAformer Pilot benchmark](docs/external-dnaformer-pilot-benchmark.md).
+See the detailed benchmark reports for [CNR](docs/external-cnr-benchmark.md), [Grass](docs/external-grass-benchmark.md), [LCRC](docs/external-lcrc-benchmark.md), and [DNAformer Pilot](docs/external-dnaformer-pilot-benchmark.md).
+
+## Research capabilities
+
+- Adaptive encoding and redundancy selection
+- XOR, LT-style fountain, and hybrid redundancy strategies
+- Substitution, insertion/deletion, dropout, and duplication simulation
+- Direct, medoid, graph/alignment, iterative-trace, multi-start, targeted, and confidence-fusion reconstruction
+- Constraint-aware DNA-like sequence generation
+- Deterministic experiment selection and held-out evaluation
+- SHA-256-verified recovery and reproducible benchmark artifacts
+- Policy-learning experiments with retained negative results
+- Physical-read adapters and external baseline comparison
 
 ## Install
 
@@ -41,17 +63,20 @@ oligoark recover demo.oligoark.json --output recovered.txt
 cmp demo.txt recovered.txt
 ```
 
-## Core capabilities
+A successful `cmp` confirms byte-for-byte recovery of the archived input.
 
-- Adaptive encoding and redundancy selection
-- Substitution, insertion/deletion, dropout and duplication simulation
-- Direct, medoid, graph/alignment, iterative-trace, multi-start, targeted and confidence-fusion reconstruction
-- SHA-256-verified recovery
-- Reproducible held-out benchmarking and optimizer evaluation
+## Research philosophy
 
-## More details
+OligoArk separates **simulation evidence**, **physical-read reconstruction evidence**, and **external published evidence**. It avoids treating software channel simulations as wet-lab validation, does not use hidden references during reconstruction candidate selection, and preserves negative experiments when a proposed method fails to improve untouched held-out results.
 
-See [Research](docs/research.md), [Benchmarking](docs/benchmarking.md), [Architecture](docs/architecture.md), and [Configuration](docs/configuration.md).
+For the detailed novelty, validation design, ablations, prior-work positioning, and limitations, see [Research](docs/research.md).
+
+## Documentation
+
+- [Research scope and novelty](docs/research.md)
+- [Benchmarking](docs/benchmarking.md)
+- [Architecture](docs/architecture.md)
+- [Configuration](docs/configuration.md)
 
 ## License
 
