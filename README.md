@@ -15,6 +15,14 @@ encode small files. It should be able to:
 OligoArk is built to test these goals. A run is considered successful only when the recovered
 file matches the original file exactly using **SHA-256**.
 
+## Why DNA storage?
+
+DNA storage is not mainly about making a file smaller in digital form. Its advantage is that
+very large amounts of information can potentially be stored in an extremely small amount of
+physical DNA, kept for long periods with little or no power while at rest, and later sequenced
+to recover the original data. OligoArk focuses on making that storage process scalable,
+memory-efficient and exactly recoverable.
+
 ## Benchmark results
 
 ### 1 GiB storage test
